@@ -105,9 +105,9 @@ func (b *icAuthBackend) pathLoginRenew(ctx context.Context, req *logical.Request
 	if err != nil {
 		return nil, err
 	} else if role == nil {
-		return logical.ErrorResponse("role '%s' no longer exists"), nil
+		return logical.ErrorResponse("role '%s' no longer exists", roleName), nil
 	} else if !policyutil.EquivalentPolicies(role.TokenPolicies, req.Auth.TokenPolicies) {
-		return logical.ErrorResponse("policies on role '%s' have changed, cannot renew"), nil
+		return logical.ErrorResponse("policies on role '%s' have changed, cannot renew", roleName), nil
 	}
 	apiKeyRaw, ok := req.Auth.InternalData["apiKey"]
 	if !ok {
