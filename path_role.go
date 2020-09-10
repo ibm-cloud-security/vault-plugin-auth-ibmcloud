@@ -235,9 +235,11 @@ var roleHelp = map[string][2]string{
 	},
 	"role": {
 		"Register an role with the backend.",
-		`A role is required to authenticate with this backend. The role binds
-		the user token with token policies and settings.
-		The bindings, token polices and token settings can all be configured
-		using this endpoint`,
+		`A role is required to authenticate with this backend. A role binds Vault policies and has
+required attributes that an authenticating entity must fulfill to login against this role.
+After authenticating the instance, Vault uses the bound policies to determine which resources
+the authorization token for the instance can access.
+
+The bindings, token polices and token settings can all be configured using this endpoint`,
 	},
 }

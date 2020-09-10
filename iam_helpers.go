@@ -7,12 +7,14 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 // A struct to contain information from IBM Cloud tokens that we want to include in Vault token metadata
 type tokenInfo struct {
-	id  string
-	sub string
+	IAMid   string
+	Subject string
+	Expiry  time.Time
 }
 
 type iamAccessTokenClaims struct {

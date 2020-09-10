@@ -2,9 +2,8 @@ package iam_plugin
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"github.com/coreos/go-oidc"
-	"github.com/hashicorp/errwrap"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/helper/cidrutil"
 	"github.com/hashicorp/vault/sdk/helper/policyutil"
@@ -17,21 +16,26 @@ func pathLogin(b *icAuthBackend) *framework.Path {
 		Pattern: "login",
 		Fields: map[string]*framework.FieldSchema{
 			apiKeyField: {
-				Type: framework.TypeString,
-				Description: `
-An IBM Cloud IAM API key that IBM Cloud auth plugin will use to authenticate and authorize the user against IBM Cloud IAM.`,
+				Type:        framework.TypeString,
+				Description: `An IBM Cloud IAM API key.`,
 				DisplayAttrs: &framework.DisplayAttributes{
 					Name: apiKeyField,
 				},
-				Required: true,
+			},
+			tokenKeyField: {
+				Type:        framework.TypeString,
+				Description: `An IBM Cloud access token.`,
+				DisplayAttrs: &framework.DisplayAttributes{
+					Name: tokenKeyField,
+				},
 			},
 			roleField: {
-				Type: framework.TypeString,
-				Description: `
-Name of the role against which the login is being attempted.`,
+				Type:        framework.TypeString,
+				Description: `Name of the role against which the login is being attempted. Required.`,
 				DisplayAttrs: &framework.DisplayAttributes{
 					Name: roleField,
 				},
+				Required: true,
 			},
 		},
 		Operations: map[logical.Operation]framework.OperationHandler{
@@ -45,13 +49,9 @@ Name of the role against which the login is being attempted.`,
 }
 
 func (b *icAuthBackend) pathAuthLogin(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-	roleName := data.Get(roleField).(string)
-	if roleName == "" {
+	roleName, ok := data.Get(roleField).(string)
+	if !ok || roleName == "" {
 		return logical.ErrorResponse(fmt.Sprintf("role name is required: %s", roleField)), nil
-	}
-	apiKey := data.Get(apiKeyField).(string)
-	if apiKey == "" {
-		return logical.ErrorResponse(fmt.Sprintf("API key is required: %s", apiKeyField)), nil
 	}
 
 	role, err := b.role(ctx, req.Storage, roleName)
@@ -71,23 +71,50 @@ func (b *icAuthBackend) pathAuthLogin(ctx context.Context, req *logical.Request,
 			return nil, logical.ErrPermissionDenied
 		}
 	}
-	info, resp, err := b.verifyAuth(ctx, apiKey, role)
-	if resp != nil || err != nil {
-		return resp, err
+
+	apiKey := data.Get(apiKeyField).(string)
+	callerToken := data.Get(tokenKeyField).(string)
+
+	if apiKey != "" {
+		callerToken, err = obtainToken(b.httpClient, iamIdentityEndpointDefault, apiKey)
+		if err != nil {
+			b.Logger().Debug("obtain user token failed", "error", err)
+			return nil, logical.ErrPermissionDenied
+		}
+	} else if callerToken != "" {
+		config, err := b.config(ctx, req.Storage)
+		if err != nil {
+			b.Logger().Error("failed to load configuration", "error", err)
+			return nil, errors.New("no configuration was found. Token login requires the auth plugin to be configured with an API key")
+		}
+		if config == nil || config.APIKey == "" {
+			return nil, errors.New("no API key was set in the configuration. Token login requires the auth plugin to be configured with an API key")
+		}
+	} else {
+		return logical.ErrorResponse(fmt.Sprintf("Either %s or %s must specified.", apiKeyField, tokenKeyField)), nil
+	}
+	callerTokenInfo, resp := b.verifyToken(ctx, callerToken)
+	if resp != nil {
+		return resp, nil
+	}
+
+	err = b.verifyBoundEntities(callerToken, callerTokenInfo.Subject, callerTokenInfo.IAMid, role)
+	if err != nil {
+		return nil, err
 	}
 
 	auth := &logical.Auth{
 		Metadata: map[string]string{
-			"IAM_ID": info.id,
-			"sub":    info.sub,
-			"role":   roleName,
-		},
-		InternalData: map[string]interface{}{
-			"apiKey": apiKey,
-			"role":   roleName,
+			iamIDField:   callerTokenInfo.IAMid,
+			subjectField: callerTokenInfo.Subject,
+			roleField:    roleName,
 		},
 	}
-
+	if apiKey != "" {
+		auth.InternalData = map[string]interface{}{
+			apiKeyField: apiKey,
+		}
+	}
 	role.PopulateTokenAuth(auth)
 
 	// Compose the response
@@ -97,10 +124,11 @@ func (b *icAuthBackend) pathAuthLogin(ctx context.Context, req *logical.Request,
 }
 
 func (b *icAuthBackend) pathLoginRenew(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
-	roleName := req.Auth.InternalData["role"].(string)
+	roleName, ok := req.Auth.Metadata[roleField]
 	if roleName == "" {
 		return logical.ErrorResponse("role name metadata not associated with auth token, invalid"), nil
 	}
+
 	role, err := b.role(ctx, req.Storage, roleName)
 	if err != nil {
 		return nil, err
@@ -109,16 +137,35 @@ func (b *icAuthBackend) pathLoginRenew(ctx context.Context, req *logical.Request
 	} else if !policyutil.EquivalentPolicies(role.TokenPolicies, req.Auth.TokenPolicies) {
 		return logical.ErrorResponse("policies on role '%s' have changed, cannot renew", roleName), nil
 	}
+
+	iamID := req.Auth.Metadata[iamIDField]
+	subject := req.Auth.Metadata[subjectField]
+	var accessCheckToken string
+
 	apiKeyRaw, ok := req.Auth.InternalData["apiKey"]
-	if !ok {
-		return nil, fmt.Errorf("an error occured retrieving the API key")
+	if ok {
+		apiKey := apiKeyRaw.(string)
+		userToken, err := obtainToken(b.httpClient, iamIdentityEndpointDefault, apiKey)
+		if err != nil {
+			b.Logger().Debug("obtain user token failed", "error", err)
+			return logical.ErrorResponse("error reauthorizing with the token's stored API key, cannot renew"), nil
+		}
+		_, resp := b.verifyToken(ctx, userToken)
+		if resp != nil {
+			return resp, nil
+		}
+		accessCheckToken = userToken
+	} else {
+		accessCheckToken, err = b.getAdminToken(ctx, req.Storage)
+		if err != nil {
+			b.Logger().Error("error obtaining the token for the configured API key", "error", err)
+			return nil, err
+		}
 	}
-	apiKey := apiKeyRaw.(string)
-
-	if _, resp, err := b.verifyAuth(ctx, apiKey, role); resp != nil || err != nil {
-		return resp, err
+	err = b.verifyBoundEntities(accessCheckToken, subject, iamID, role)
+	if err != nil {
+		return nil, err
 	}
-
 	resp := &logical.Response{Auth: req.Auth}
 	resp.Auth.TTL = role.TokenTTL
 	resp.Auth.MaxTTL = role.TokenMaxTTL
@@ -126,64 +173,42 @@ func (b *icAuthBackend) pathLoginRenew(ctx context.Context, req *logical.Request
 	return resp, nil
 }
 
-/*
-	Authenticates the user and does verification of their IBM Cloud token and verifies them against the role's bound
-	entities.
-	The logical.Response and error returns are both returns that should be checked and no further processing performed
-	if either are null.
-*/
-func (b *icAuthBackend) verifyAuth(ctx context.Context, apiKey string, role *ibmCloudRole) (*tokenInfo, *logical.Response, error) {
-	// obtain the token
-	accessToken, err := obtainToken(b.httpClient, iamIdentityEndpointDefault, apiKey)
-	if err != nil {
-		b.Logger().Debug("obtain user token failed", "error", err)
-		return nil, nil, logical.ErrPermissionDenied
-	}
-	// verify the token
-	provider, err := b.getProvider()
-	if err != nil {
-		return nil, nil, errwrap.Wrapf("error getting provider for login operation: {{err}}", err)
-	}
-
-	oidcConfig := &oidc.Config{
-		SkipClientIDCheck: true,
-	}
-	verifier := provider.Verifier(oidcConfig)
-	idToken, err := verifier.Verify(ctx, accessToken)
-	if err != nil {
-		return nil, logical.ErrorResponse(errwrap.Wrapf("error validating token: {{err}}", err).Error()), nil
-	}
-
-	// Get the IAM access token claims we are interested in
-	iamAccessTokenClaims := iamAccessTokenClaims{}
-	if err := idToken.Claims(&iamAccessTokenClaims); err != nil {
-		return nil, nil, errwrap.Wrapf("unable to successfully parse all claims from token: {{err}}", err)
-	}
-
+func (b *icAuthBackend) verifyBoundEntities(accessToken, subject, iamID string, role *ibmCloudRole) error {
 	// Check for the subject in the bound subject list
-	if !strutil.StrListContains(role.BoundSubscriptionsIDs, idToken.Subject) {
+	if !strutil.StrListContains(role.BoundSubscriptionsIDs, subject) {
+		var err error
 		// Check the access groups next
 		subjectFoundInGroup := false
 		for _, group := range role.BoundAccessGroupIDs {
-			if err = checkGroupMembership(b.httpClient, group, iamAccessTokenClaims.IAMID, accessToken); err == nil {
+			if err = checkGroupMembership(b.httpClient, group, iamID, accessToken); err == nil {
 				subjectFoundInGroup = true
 				break
 			}
 		}
 		if !subjectFoundInGroup {
 			b.Logger().Debug("The subject was not found in the subject list or access groups for this role.", "error", err)
-			return nil, nil, logical.ErrPermissionDenied
+			return logical.ErrPermissionDenied
 		}
 	}
-
-	tokenInfo := &tokenInfo{
-		id:  iamAccessTokenClaims.IAMID,
-		sub: idToken.Subject,
-	}
-
-	return tokenInfo, nil, nil
+	return nil
 }
 
-//TODO (smatzek): Fill in login path help
-const loginHelpSyn = `Authenticate and authorize a user request to access IBM Cloud secrets using IBM Cloud IAM.`
-const loginHelpDesc = ``
+const loginHelpSyn = `Authenticates IBM Cloud entities with Vault.`
+const loginHelpDesc = `
+Authenticate IBM Cloud entities.
+
+Currently supports authentication for:
+
+User accounts or service IDs
+=====================
+User accounts or service IDs can sign in using an IAM access token or API key.
+If an IAM access token is used, the plugin must be configured with an API key that has authority to check access group
+membership. See the configuration help for more information.
+
+Vault verifies the access token if one is provided and parses the identity of the account.
+
+If an API key is provided, Vault will log into IBM Cloud and create an IAM access token for the account.
+
+Renewal is rejected if the role has changed or no longer exists, or if the identity is no longer in the role's subject
+list or access groups.
+`
