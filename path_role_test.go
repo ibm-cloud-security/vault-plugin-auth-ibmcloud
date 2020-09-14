@@ -1,4 +1,4 @@
-package iam_plugin
+package ibmcloudauth
 
 import (
 	"context"

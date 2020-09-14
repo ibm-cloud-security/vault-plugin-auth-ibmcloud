@@ -6,7 +6,7 @@ import (
 	hclog "github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/vault/api"
 	"github.com/hashicorp/vault/sdk/plugin"
-	iam "iam-plugin-poc"
+	ibmcloud "vault-plugin-auth-ibmcloud"
 )
 
 func main() {
@@ -18,7 +18,7 @@ func main() {
 	tlsProviderFunc := api.VaultPluginTLSProvider(tlsConfig)
 
 	if err := plugin.Serve(&plugin.ServeOpts{
-		BackendFactoryFunc: iam.Factory,
+		BackendFactoryFunc: ibmcloud.Factory,
 		TLSProviderFunc:    tlsProviderFunc,
 	}); err != nil {
 		logger := hclog.New(&hclog.LoggerOptions{})

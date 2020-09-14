@@ -1,4 +1,4 @@
-module iam-plugin-poc
+module vault-plugin-auth-ibmcloud
 
 go 1.14
 

@@ -1,4 +1,4 @@
-package iam_plugin
+package ibmcloudauth
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 )
 
 // pathsRole returns the path configurations for the CRUD operations on roles
-func pathsRole(b *icAuthBackend) []*framework.Path {
+func pathsRole(b *ibmcloudAuthBackend) []*framework.Path {
 	p := []*framework.Path{
 		&framework.Path{
 			Pattern: "role/?",
@@ -76,7 +76,7 @@ type ibmCloudRole struct {
 
 // role takes a storage backend and the name and returns the role's storage
 // entry
-func (b *icAuthBackend) role(ctx context.Context, s logical.Storage, name string) (*ibmCloudRole, error) {
+func (b *ibmcloudAuthBackend) role(ctx context.Context, s logical.Storage, name string) (*ibmCloudRole, error) {
 	raw, err := s.Get(ctx, "role/"+strings.ToLower(name))
 	if err != nil {
 		return nil, err
@@ -94,7 +94,7 @@ func (b *icAuthBackend) role(ctx context.Context, s logical.Storage, name string
 }
 
 // pathRoleExistenceCheck returns whether the role with the given name exists or not.
-func (b *icAuthBackend) pathRoleExistenceCheck(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
+func (b *ibmcloudAuthBackend) pathRoleExistenceCheck(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
 	role, err := b.role(ctx, req.Storage, data.Get("name").(string))
 	if err != nil {
 		return false, err
@@ -103,7 +103,7 @@ func (b *icAuthBackend) pathRoleExistenceCheck(ctx context.Context, req *logical
 }
 
 // pathRoleList is used to list all the Roles registered with the backend.
-func (b *icAuthBackend) pathRoleList(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+func (b *ibmcloudAuthBackend) pathRoleList(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	roles, err := req.Storage.List(ctx, "role/")
 	if err != nil {
 		return nil, err
@@ -112,7 +112,7 @@ func (b *icAuthBackend) pathRoleList(ctx context.Context, req *logical.Request, 
 }
 
 // pathRoleRead grabs a read lock and reads the options set on the role from the storage
-func (b *icAuthBackend) pathRoleRead(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+func (b *ibmcloudAuthBackend) pathRoleRead(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	roleName := data.Get("name").(string)
 	if roleName == "" {
 		return logical.ErrorResponse("missing name"), nil
@@ -139,7 +139,7 @@ func (b *icAuthBackend) pathRoleRead(ctx context.Context, req *logical.Request, 
 }
 
 // pathRoleDelete removes the role from storage
-func (b *icAuthBackend) pathRoleDelete(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+func (b *ibmcloudAuthBackend) pathRoleDelete(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	roleName := data.Get("name").(string)
 	if roleName == "" {
 		return logical.ErrorResponse("role name required"), nil
@@ -155,7 +155,7 @@ func (b *icAuthBackend) pathRoleDelete(ctx context.Context, req *logical.Request
 
 // pathRoleCreateUpdate registers a new role with the backend or updates the options
 // of an existing role
-func (b *icAuthBackend) pathRoleCreateUpdate(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+func (b *ibmcloudAuthBackend) pathRoleCreateUpdate(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	roleName := data.Get("name").(string)
 	if roleName == "" {
 		return logical.ErrorResponse("missing role name"), nil

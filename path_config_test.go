@@ -1,4 +1,4 @@
-package iam_plugin
+package ibmcloudauth
 
 import (
 	"context"
@@ -17,7 +17,8 @@ func TestConfig_Write(t *testing.T) {
 	}
 
 	configData = map[string]interface{}{
-		apiKeyField: "theAPIKey",
+		apiKeyField:    "theAPIKey",
+		accountIDField: "theAccount",
 	}
 	if err := testConfigCreate(t, b, s, configData); err != nil {
 		t.Fatalf("err: %v", err)
@@ -40,6 +41,11 @@ func TestConfig_Write(t *testing.T) {
 		if keyVal != redacted {
 			t.Fatal("the api_key value was not redacted")
 		}
+		_, ok = resp.Data[accountIDField]
+		if !ok {
+			t.Fatal("the account_id field was not found in the read config")
+		}
+
 	} else {
 		t.Fatal("did not get a response from the read post-create")
 	}
@@ -49,7 +55,8 @@ func TestConfigDelete(t *testing.T) {
 	b, s := testBackend(t)
 
 	configData := map[string]interface{}{
-		apiKeyField: "theAPIKey",
+		apiKeyField:    "theAPIKey",
+		accountIDField: "theAccount",
 	}
 
 	if err := testConfigCreate(t, b, s, configData); err != nil {
@@ -79,7 +86,7 @@ func TestConfigDelete(t *testing.T) {
 	}
 }
 
-func testConfigCreate(t *testing.T, b *icAuthBackend, s logical.Storage, d map[string]interface{}) error {
+func testConfigCreate(t *testing.T, b *ibmcloudAuthBackend, s logical.Storage, d map[string]interface{}) error {
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
 		Path:      fmt.Sprintf("config"),

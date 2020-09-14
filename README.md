@@ -1,4 +1,4 @@
-# opensrc-vault-plugin-auth-iam
+# IBM Cloud Auth Method
 
 This is a standalone backend plugin for use with [HashiCorp Vault](https://www.github.com/hashicorp/vault).
 This plugin allows for various IBM Cloud entities to authenticate with Vault.
@@ -8,7 +8,7 @@ User accounts or service IDs can sign in using an IBM Cloud IAM access token or 
 ## Installation 
 
 Build the plugin:
-`go build -o iam cmd/iam/main.go`
+`go build -o ibmcloud cmd/ibmcloud/main.go`
 
 
 Copy the executable into Vault's configured plugin folder
@@ -16,11 +16,11 @@ Copy the executable into Vault's configured plugin folder
 
 Register the plugin:
 ```
-export SHA256=$(shasum -a 256 "iam" | cut -d' ' -f1)
-vault plugin register -sha256=${SHA256} auth iam
+export SHA256=$(shasum -a 256 "ibmcloud" | cut -d' ' -f1)
+vault plugin register -sha256=${SHA256} auth ibmcloud
 ```
 
-Enable (mount) the plugin: `vault auth enable iam`
+Enable (mount) the plugin: `vault auth enable ibmcloud`
 
 ## Usage
 The general usage pattern is for the administrator to create one or more roles which
@@ -28,36 +28,34 @@ map Vault policies to IBM Cloud Access Groups and/or a list of IBM Cloud user (s
 
 Users or service IDs can then log into Vault using by specifying a role name and either their an IBM Cloud IAM access token or API key.
 
-To enable logging in with IBM Cloud IAM access tokens, the plugin must be configured with an API key for a service ID
-or user with sufficient permissions to verify IBM Cloud access group membership for all the access groups
-bound to the role.
-
+The auth method must be configured in advance before authentication.
 
 # API documentation
-This documentation assumes the plugin method is mounted at the `/auth/iam` path in Vault. Since it is possible to
+This documentation assumes the plugin method is mounted at the `/auth/ibmcloud` path in Vault. Since it is possible to
 enable auth methods at any location, please update your API calls accordingly.
 
 
 ## Configure
 
-Configures the credentials required to verify IBM Cloud access group membership for the all the access groups
-bound to roles. This configuration is required to allow authentication using IBM Cloud access tokens. The configuration
-is not required if IBM Cloud API keys will be used for authentication. 
+Configures the auth method and must be done before authentication can succeed.
 
 | Method   | Path |
 |----------|-------------------------------------------------|
-| `POST`   |  `/auth/iam/config`                              |
+| `POST`   |  `/auth/ibmcloud/config`                             |
 
 
 ### Parameters
 * `api_key (string: <required>)` - An API key for a service ID or user with sufficient permissions to verify IBM Cloud access group
 membership for the all the access groups bound to the plugin's roles.
+* `account_id (string: <required>)` - An IBM Cloud account ID. The auth method will only authenticate users or service IDs that
+have access to this account.
 
 ### Sample Payload
 
 ```json
 {
-  "api_key": "Yl5OBiNlgpx..."
+  "api_key":    "Yl5OBiNlgpx...",
+  "account_id": "abd85726cbd..."
 }
 ```
 
@@ -67,7 +65,7 @@ $ curl \
     --header "X-Vault-Token: ..." \
     --request POST \
     --data @payload.json \
-    https://127.0.0.1:8200/v1/auth/iam/config
+    https://127.0.0.1:8200/v1/auth/ibmcloud/config
 ```
 
 ## Read Config
@@ -75,23 +73,25 @@ Returns the configuration, if any. Credentials are redacted in the output.
 
 | Method   | Path |
 |----------|--------------------------------------------------|
-| `GET`    |  `/auth/iam/config`                              |
+| `GET`    |  `/auth/ibmcloud/config`                              |
 
 
 ### Sample Request
 ```shell script
 $ curl \
     --header "X-Vault-Token: ..." \
-    https://127.0.0.1:8200/v1/auth/iam/config
+    https://127.0.0.1:8200/v1/auth/ibmcloud/config
 ```
 
 ### Sample Response
 ```json
 {
   "data": {
-    "api_key": "<redacted>"
+    "api_key": "<redacted>",
+    "account_id": "abd85726cbd..."
   },
-  ...
+  "...": "..."
+
 }
 ```
 
@@ -100,14 +100,14 @@ Deletes the previously configured configuration and clears the credentials in th
 
 | Method     | Path |
 |----------- |--------------------------------------------------|
-| `DELETE`   |  `/auth/iam/config`                              |
+| `DELETE`   |  `/auth/ibmcloud/config`                              |
 
 ### Sample Request
 ```shell script
 $ curl \
     --header "X-Vault-Token: ..." \
     --request DELETE \
-    https://127.0.0.1:8200/v1/auth/iam/config
+    https://127.0.0.1:8200/v1/auth/ibmcloud/config
 ```
 
 ## Create Role
@@ -117,7 +117,7 @@ authenticated entities attempting to login.
 
 | Method     | Path                                             |
 |----------- |--------------------------------------------------|
-| `POST`     |  `/auth/iam/role/:name`                          |
+| `POST`     |  `/auth/ibmcloud/role/:name`                          |
 
 
 ### Parameters
@@ -154,14 +154,14 @@ $ curl \
     --header "X-Vault-Token: ..." \
     --request POST \
     --data @payload.json \
-    https://127.0.0.1:8200/v1/auth/iam/role/dev-role
+    https://127.0.0.1:8200/v1/auth/ibmcloud/role/dev-role
 ```
 ## Read Role
 Returns the previously registered role configuration.
 
 | Method     | Path                                             |
 |----------- |--------------------------------------------------|
-| `GET`      |  `/auth/iam/role/:name`                          |
+| `GET`      |  `/auth/ibmcloud/role/:name`                          |
  
 ### Parameters
 
@@ -172,7 +172,7 @@ Returns the previously registered role configuration.
 ```shell script
 $ curl \
     --header "X-Vault-Token: ..." \
-    https://127.0.0.1:8200/v1/auth/iam/role/dev-role
+    https://127.0.0.1:8200/v1/auth/ibmcloud/role/dev-role
 ```
 
 ### Sample Response
@@ -200,7 +200,8 @@ $ curl \
     "token_ttl": 0,
     "token_type": "default"
   },
-  ...
+  "...": "..."
+
 }
 ```
 
@@ -209,14 +210,14 @@ Lists all the roles that are registered with the plugin.
 
 | Method     | Path                                             |
 |----------- |--------------------------------------------------|
-| `LIST`     |  `/auth/iam/role`                                |
+| `LIST`     |  `/auth/ibmcloud/role`                                |
  
 ### Sample Request
  ```shell script
 curl \
     --header "X-Vault-Token: ..." \
     --request LIST \
-    https://127.0.0.1:8200/v1/auth/iam/role
+    https://127.0.0.1:8200/v1/auth/ibmcloud/role
 ```
 
 ### Sample Response
@@ -226,7 +227,8 @@ curl \
   "data": {
     "keys": ["dev-role", "prod-role"]
   },
- ...
+  "...": "..."
+
 }
 ```
 
@@ -235,7 +237,7 @@ Deletes the previously registered role.
 
 | Method     | Path                                             |
 |----------- |--------------------------------------------------|
-| `DELETE`   |  `/auth/iam/role/:name`                          |
+| `DELETE`   |  `/auth/ibmcloud/role/:name`                          |
  
 ### Parameters
 * `name (string: <required>)` - Name of the role.
@@ -245,7 +247,7 @@ Deletes the previously registered role.
  curl \
     --header "X-Vault-Token: ..." \
     --request DELETE \
-    https://127.0.0.1:8200/v1/auth/iam/role/dev-role
+    https://127.0.0.1:8200/v1/auth/ibmcloud/role/dev-role
 ```
 
 ## Login
@@ -257,7 +259,7 @@ entities of the given role.
 
 | Method     | Path                                             |
 |----------- |--------------------------------------------------|
-| `POST`     |  `/auth/iam/login`                               |
+| `POST`     |  `/auth/ibmcloud/login`                               |
 
 ### Parameters
 * `role (string: <required>)` - Name of the role against which the login is being attempted.
@@ -289,7 +291,7 @@ API key form:
 $ curl \
     --request POST \
     --data @payload.json \
-    https://127.0.0.1:8200/v1/auth/iam/login
+    https://127.0.0.1:8200/v1/auth/ibmcloud/login
 ```
 
 ### Sample Response
@@ -319,6 +321,6 @@ $ curl \
     "token_type": "service",
     "orphan": true
   },
-...
+  "...": "..."
 }
 ```

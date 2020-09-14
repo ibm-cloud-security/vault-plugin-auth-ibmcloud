@@ -1,4 +1,4 @@
-package iam_plugin
+package ibmcloudauth
 
 import (
 	"context"
@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-func testBackend(tb testing.TB) (*icAuthBackend, logical.Storage) {
+func testBackend(tb testing.TB) (*ibmcloudAuthBackend, logical.Storage) {
 	tb.Helper()
 
 	config := logical.TestBackendConfig()
@@ -18,5 +18,5 @@ func testBackend(tb testing.TB) (*icAuthBackend, logical.Storage) {
 	if err != nil {
 		tb.Fatal(err)
 	}
-	return b.(*icAuthBackend), config.StorageView
+	return b.(*ibmcloudAuthBackend), config.StorageView
 }

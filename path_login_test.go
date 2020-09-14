@@ -1,3 +1,3 @@
-package iam_plugin
+package ibmcloudauth
 
 //TODO write login path test

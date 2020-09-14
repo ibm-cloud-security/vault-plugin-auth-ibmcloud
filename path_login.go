@@ -1,4 +1,4 @@
-package iam_plugin
+package ibmcloudauth
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
-func pathLogin(b *icAuthBackend) *framework.Path {
+func pathLogin(b *ibmcloudAuthBackend) *framework.Path {
 	return &framework.Path{
 		Pattern: "login",
 		Fields: map[string]*framework.FieldSchema{
@@ -48,7 +48,7 @@ func pathLogin(b *icAuthBackend) *framework.Path {
 	}
 }
 
-func (b *icAuthBackend) pathAuthLogin(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+func (b *ibmcloudAuthBackend) pathAuthLogin(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	roleName, ok := data.Get(roleField).(string)
 	if !ok || roleName == "" {
 		return logical.ErrorResponse(fmt.Sprintf("role name is required: %s", roleField)), nil
@@ -72,8 +72,21 @@ func (b *icAuthBackend) pathAuthLogin(ctx context.Context, req *logical.Request,
 		}
 	}
 
+	if err = b.verifyPluginIsConfigured(ctx, req); err != nil {
+		return nil, err
+	}
+
 	apiKey := data.Get(apiKeyField).(string)
 	callerToken := data.Get(tokenKeyField).(string)
+	if apiKey == "" && callerToken == "" {
+		return logical.ErrorResponse(fmt.Sprintf("Either %s or %s must specified.", apiKeyField, tokenKeyField)), nil
+
+	}
+	adminToken, err := b.getAdminToken(ctx, req.Storage)
+	if err != nil {
+		b.Logger().Error("error obtaining the token for the configured API key", "error", err)
+		return nil, err
+	}
 
 	if apiKey != "" {
 		callerToken, err = obtainToken(b.httpClient, iamIdentityEndpointDefault, apiKey)
@@ -81,33 +94,31 @@ func (b *icAuthBackend) pathAuthLogin(ctx context.Context, req *logical.Request,
 			b.Logger().Debug("obtain user token failed", "error", err)
 			return nil, logical.ErrPermissionDenied
 		}
-	} else if callerToken != "" {
-		config, err := b.config(ctx, req.Storage)
-		if err != nil {
-			b.Logger().Error("failed to load configuration", "error", err)
-			return nil, errors.New("no configuration was found. Token login requires the auth plugin to be configured with an API key")
-		}
-		if config == nil || config.APIKey == "" {
-			return nil, errors.New("no API key was set in the configuration. Token login requires the auth plugin to be configured with an API key")
-		}
-	} else {
-		return logical.ErrorResponse(fmt.Sprintf("Either %s or %s must specified.", apiKeyField, tokenKeyField)), nil
 	}
+
 	callerTokenInfo, resp := b.verifyToken(ctx, callerToken)
 	if resp != nil {
 		return resp, nil
 	}
 
-	err = b.verifyBoundEntities(callerToken, callerTokenInfo.Subject, callerTokenInfo.IAMid, role)
+	err = b.verifyAccountAccess(ctx, req.Storage, adminToken, callerTokenInfo.Identifier, callerTokenInfo.IAMid, callerTokenInfo.SubjectType)
+	if err != nil {
+		b.Logger().Error("Error verifying account access", "error", err)
+		return nil, logical.ErrPermissionDenied
+	}
+
+	err = b.verifyBoundEntities(adminToken, callerTokenInfo.Subject, callerTokenInfo.IAMid, role)
 	if err != nil {
 		return nil, err
 	}
 
 	auth := &logical.Auth{
 		Metadata: map[string]string{
-			iamIDField:   callerTokenInfo.IAMid,
-			subjectField: callerTokenInfo.Subject,
-			roleField:    roleName,
+			iamIDField:       callerTokenInfo.IAMid,
+			subjectField:     callerTokenInfo.Subject,
+			subjectTypeField: callerTokenInfo.SubjectType,
+			identifierField:  callerTokenInfo.Identifier,
+			roleField:        roleName,
 		},
 	}
 	if apiKey != "" {
@@ -123,7 +134,7 @@ func (b *icAuthBackend) pathAuthLogin(ctx context.Context, req *logical.Request,
 	}, nil
 }
 
-func (b *icAuthBackend) pathLoginRenew(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+func (b *ibmcloudAuthBackend) pathLoginRenew(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	roleName, ok := req.Auth.Metadata[roleField]
 	if roleName == "" {
 		return logical.ErrorResponse("role name metadata not associated with auth token, invalid"), nil
@@ -138,9 +149,20 @@ func (b *icAuthBackend) pathLoginRenew(ctx context.Context, req *logical.Request
 		return logical.ErrorResponse("policies on role '%s' have changed, cannot renew", roleName), nil
 	}
 
+	if err = b.verifyPluginIsConfigured(ctx, req); err != nil {
+		return nil, err
+	}
+
 	iamID := req.Auth.Metadata[iamIDField]
 	subject := req.Auth.Metadata[subjectField]
-	var accessCheckToken string
+	subjectType := req.Auth.Metadata[subjectTypeField]
+	identifier := req.Auth.Metadata[identifierField]
+
+	adminToken, err := b.getAdminToken(ctx, req.Storage)
+	if err != nil {
+		b.Logger().Error("error obtaining the token for the configured API key", "error", err)
+		return nil, err
+	}
 
 	apiKeyRaw, ok := req.Auth.InternalData["apiKey"]
 	if ok {
@@ -154,15 +176,14 @@ func (b *icAuthBackend) pathLoginRenew(ctx context.Context, req *logical.Request
 		if resp != nil {
 			return resp, nil
 		}
-		accessCheckToken = userToken
-	} else {
-		accessCheckToken, err = b.getAdminToken(ctx, req.Storage)
-		if err != nil {
-			b.Logger().Error("error obtaining the token for the configured API key", "error", err)
-			return nil, err
-		}
 	}
-	err = b.verifyBoundEntities(accessCheckToken, subject, iamID, role)
+	err = b.verifyAccountAccess(ctx, req.Storage, adminToken, identifier, iamID, subjectType)
+	if err != nil {
+		b.Logger().Error("Error verifying account access", "error", err)
+		return nil, logical.ErrPermissionDenied
+	}
+
+	err = b.verifyBoundEntities(adminToken, subject, iamID, role)
 	if err != nil {
 		return nil, err
 	}
@@ -173,7 +194,7 @@ func (b *icAuthBackend) pathLoginRenew(ctx context.Context, req *logical.Request
 	return resp, nil
 }
 
-func (b *icAuthBackend) verifyBoundEntities(accessToken, subject, iamID string, role *ibmCloudRole) error {
+func (b *ibmcloudAuthBackend) verifyBoundEntities(accessToken, subject, iamID string, role *ibmCloudRole) error {
 	// Check for the subject in the bound subject list
 	if !strutil.StrListContains(role.BoundSubscriptionsIDs, subject) {
 		var err error
@@ -191,6 +212,21 @@ func (b *icAuthBackend) verifyBoundEntities(accessToken, subject, iamID string, 
 		}
 	}
 	return nil
+}
+
+func (b *ibmcloudAuthBackend) verifyAccountAccess(ctx context.Context, stg logical.Storage, adminToken, identifier, iamID, subjectType string) error {
+
+	config, err := b.config(ctx, stg)
+	if err != nil {
+		b.Logger().Error("failed to load configuration", "error", err)
+		return errors.New("no configuration was found")
+	}
+
+	if subjectType == serviceIDSubjectType {
+		return checkServiceIDAccount(b.httpClient, adminToken, identifier, config.Account)
+	} else {
+		return checkUserIDAccount(b.httpClient, adminToken, iamID, config.Account)
+	}
 }
 
 const loginHelpSyn = `Authenticates IBM Cloud entities with Vault.`
