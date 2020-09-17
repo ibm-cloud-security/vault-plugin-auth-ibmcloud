@@ -7,7 +7,7 @@ import (
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
-func pathConfig(b *ibmcloudAuthBackend) *framework.Path {
+func pathConfig(b *ibmCloudAuthBackend) *framework.Path {
 	return &framework.Path{
 		Pattern: "config",
 		Fields: map[string]*framework.FieldSchema{
@@ -45,7 +45,7 @@ type ibmCloudConfig struct {
 	Account string `json:"account"`
 }
 
-func (b *ibmcloudAuthBackend) config(ctx context.Context, s logical.Storage) (*ibmCloudConfig, error) {
+func (b *ibmCloudAuthBackend) config(ctx context.Context, s logical.Storage) (*ibmCloudConfig, error) {
 	entry, err := s.Get(ctx, "config")
 	if err != nil {
 		return nil, err
@@ -61,7 +61,7 @@ func (b *ibmcloudAuthBackend) config(ctx context.Context, s logical.Storage) (*i
 	return config, nil
 }
 
-func (b *ibmcloudAuthBackend) pathConfigExistenceCheck(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
+func (b *ibmCloudAuthBackend) pathConfigExistenceCheck(ctx context.Context, req *logical.Request, data *framework.FieldData) (bool, error) {
 	config, err := b.config(ctx, req.Storage)
 	if err != nil {
 		return false, err
@@ -69,7 +69,7 @@ func (b *ibmcloudAuthBackend) pathConfigExistenceCheck(ctx context.Context, req 
 	return config != nil, nil
 }
 
-func (b *ibmcloudAuthBackend) pathConfigWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+func (b *ibmCloudAuthBackend) pathConfigWrite(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	config, err := b.config(ctx, req.Storage)
 	if err != nil {
 		return nil, err
@@ -106,7 +106,7 @@ func (b *ibmcloudAuthBackend) pathConfigWrite(ctx context.Context, req *logical.
 	return nil, nil
 }
 
-func (b *ibmcloudAuthBackend) pathConfigRead(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+func (b *ibmCloudAuthBackend) pathConfigRead(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	config, err := b.config(ctx, req.Storage)
 	if err != nil {
 		return nil, err
@@ -129,7 +129,7 @@ func (b *ibmcloudAuthBackend) pathConfigRead(ctx context.Context, req *logical.R
 	return resp, nil
 }
 
-func (b *ibmcloudAuthBackend) pathConfigDelete(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+func (b *ibmCloudAuthBackend) pathConfigDelete(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	err := req.Storage.Delete(ctx, "config")
 
 	if err == nil {
@@ -139,7 +139,7 @@ func (b *ibmcloudAuthBackend) pathConfigDelete(ctx context.Context, req *logical
 	return nil, err
 }
 
-func (b *ibmcloudAuthBackend) verifyPluginIsConfigured(ctx context.Context, req *logical.Request) error {
+func (b *ibmCloudAuthBackend) verifyPluginIsConfigured(ctx context.Context, req *logical.Request) error {
 	// verify the plugin is configured
 	config, err := b.config(ctx, req.Storage)
 	if err != nil {

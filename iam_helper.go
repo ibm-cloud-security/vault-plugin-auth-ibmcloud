@@ -1,12 +1,17 @@
 package ibmcloudauth
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/coreos/go-oidc"
 	"github.com/hashicorp/errwrap"
+	"github.com/hashicorp/go-cleanhttp"
+	"github.com/hashicorp/vault/sdk/logical"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -42,7 +47,64 @@ type serviceIDDetail struct {
 	Account string `json:"account_id"`
 }
 
-func checkGroupMembership(client *http.Client, groupID, iamID, iamToken string) error {
+type iamHelper interface {
+	ObtainToken(apiKey string) (string, error)
+	VerifyToken(ctx context.Context, token string) (*tokenInfo, *logical.Response)
+	CheckServiceIDAccount(iamToken, identifier, accountID string) error
+	CheckUserIDAccount(iamToken, iamID, accountID string) error
+	CheckGroupMembership(groupID, iamID, iamToken string) error
+	Init()
+	Cleanup()
+}
+
+type ibmCloudHelper struct {
+	providerLock      sync.RWMutex
+	provider          *oidc.Provider
+	providerCtx       context.Context
+	providerCtxCancel context.CancelFunc
+	httpClient        *http.Client
+}
+
+func (h *ibmCloudHelper) Init() {
+	h.providerCtx, h.providerCtxCancel = context.WithCancel(context.Background())
+	h.httpClient = cleanhttp.DefaultPooledClient()
+}
+
+func (h *ibmCloudHelper) Cleanup() {
+	h.providerLock.Lock()
+	if h.providerCtxCancel != nil {
+		h.providerCtxCancel()
+	}
+	h.providerLock.Unlock()
+}
+
+func (h *ibmCloudHelper) getProvider() (*oidc.Provider, error) {
+	h.providerLock.RLock()
+	unlockFunc := h.providerLock.RUnlock
+	defer func() { unlockFunc() }()
+
+	if h.provider != nil {
+		return h.provider, nil
+	}
+
+	h.providerLock.RUnlock()
+	h.providerLock.Lock()
+	unlockFunc = h.providerLock.Unlock
+
+	if h.provider != nil {
+		return h.provider, nil
+	}
+
+	provider, err := oidc.NewProvider(h.providerCtx, iamIdentityEndpointDefault)
+	if err != nil {
+		return nil, errwrap.Wrapf("error creating provider with given values: {{err}}", err)
+	}
+
+	h.provider = provider
+	return provider, nil
+}
+
+func (h *ibmCloudHelper) CheckGroupMembership(groupID, iamID, iamToken string) error {
 	r, err := http.NewRequest(http.MethodHead, getURL(iamEndpointFieldDefault, accessGroupMembershipCheck, groupID, iamID), nil)
 	if err != nil {
 		return errwrap.Wrapf("failed creating http request for creating policy: {{err}}", err)
@@ -52,20 +114,20 @@ func checkGroupMembership(client *http.Client, groupID, iamID, iamToken string) 
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Accept", "application/json")
 
-	_, err = httpRequestCheckStatus(client, r, http.StatusNoContent)
+	_, err = httpRequestCheckStatus(h.httpClient, r, http.StatusNoContent)
 	return err
 }
 
 /**
 Obtain an IAM token by way of an API Key
 */
-func obtainToken(client *http.Client, endpoint, apiKey string) (string, error) {
+func (h *ibmCloudHelper) ObtainToken(apiKey string) (string, error) {
 	data := url.Values{}
 	data.Set("grant_type", "urn:ibm:params:oauth:grant-type:apikey")
 	data.Set("apikey", apiKey)
 	data.Set("response_type", "cloud_iam")
 
-	req, err := http.NewRequest(http.MethodPost, endpoint+"/token", strings.NewReader(data.Encode()))
+	req, err := http.NewRequest(http.MethodPost, iamIdentityEndpointDefault+"/token", strings.NewReader(data.Encode()))
 	if err != nil {
 		return "", errwrap.Wrapf("Error creating obtain token request: {{err}}", err)
 	}
@@ -73,7 +135,7 @@ func obtainToken(client *http.Client, endpoint, apiKey string) (string, error) {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	resp, err := client.Do(req)
+	resp, err := h.httpClient.Do(req)
 	if err != nil {
 		return "", errwrap.Wrapf("Error obtaining token: {{err}}", err)
 	}
@@ -89,7 +151,43 @@ func obtainToken(client *http.Client, endpoint, apiKey string) (string, error) {
 	return result["access_token"].(string), nil
 }
 
-func checkServiceIDAccount(client *http.Client, iamToken, identifier, accountID string) error {
+/**
+Verifies an IBM Cloud IAM token. If successful, it will return a tokenInfo
+with relevant items contained in the token.
+*/
+func (h *ibmCloudHelper) VerifyToken(ctx context.Context, token string) (*tokenInfo, *logical.Response) {
+	// verify the token
+	provider, err := h.getProvider()
+	if err != nil {
+		return nil, logical.ErrorResponse("unable to successfully parse all claims from token: %s", err)
+	}
+
+	oidcConfig := &oidc.Config{
+		SkipClientIDCheck: true,
+	}
+	verifier := provider.Verifier(oidcConfig)
+	idToken, err := verifier.Verify(ctx, token)
+	if err != nil {
+		return nil, logical.ErrorResponse("an error occurred verifying the token %s", err)
+	}
+
+	// Get the IAM access token claims we are interested in
+	iamAccessTokenClaims := iamAccessTokenClaims{}
+	if err := idToken.Claims(&iamAccessTokenClaims); err != nil {
+		return nil, logical.ErrorResponse("unable to successfully parse all claims from token: %s", err)
+	}
+
+	return &tokenInfo{
+		IAMid:       iamAccessTokenClaims.IAMID,
+		Identifier:  iamAccessTokenClaims.Identifier,
+		SubjectType: iamAccessTokenClaims.SubjectType,
+		Subject:     idToken.Subject,
+		Expiry:      idToken.Expiry,
+	}, nil
+
+}
+
+func (h *ibmCloudHelper) CheckServiceIDAccount(iamToken, identifier, accountID string) error {
 	r, err := http.NewRequest(http.MethodGet, getURL(iamEndpointFieldDefault, serviceIDDetails, identifier), nil)
 	if err != nil {
 		return errwrap.Wrapf("failed creating http request for creating policy: {{err}}", err)
@@ -98,7 +196,7 @@ func checkServiceIDAccount(client *http.Client, iamToken, identifier, accountID 
 	r.Header.Set("Authorization", "Bearer "+iamToken)
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Accept", "application/json")
-	body, httpStatus, err := httpRequest(client, r)
+	body, httpStatus, err := httpRequest(h.httpClient, r)
 	if err != nil {
 		return err
 	}
@@ -119,7 +217,7 @@ func checkServiceIDAccount(client *http.Client, iamToken, identifier, accountID 
 	return nil
 }
 
-func checkUserIDAccount(client *http.Client, iamToken, iamID, accountID string) error {
+func (h *ibmCloudHelper) CheckUserIDAccount(iamToken, iamID, accountID string) error {
 	r, err := http.NewRequest(http.MethodGet, getURL(userMgmtEndpointDefault, getUserProfile, accountID, iamID), nil)
 	if err != nil {
 		return errwrap.Wrapf("failed creating http request for creating policy: {{err}}", err)
@@ -128,6 +226,6 @@ func checkUserIDAccount(client *http.Client, iamToken, iamID, accountID string) 
 	r.Header.Set("Authorization", iamToken)
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Accept", "application/json")
-	_, err = httpRequestCheckStatus(client, r, http.StatusOK)
+	_, err = httpRequestCheckStatus(h.httpClient, r, http.StatusOK)
 	return err
 }

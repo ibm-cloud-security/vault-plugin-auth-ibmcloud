@@ -3,12 +3,8 @@ package ibmcloudauth
 import (
 	"context"
 	"errors"
-	"github.com/coreos/go-oidc"
-	"github.com/hashicorp/errwrap"
-	"github.com/hashicorp/go-cleanhttp"
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
-	"net/http"
 	"sync"
 	"time"
 )
@@ -22,22 +18,19 @@ func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend,
 }
 
 // IBM Cloud Auth Backend
-type ibmcloudAuthBackend struct {
+type ibmCloudAuthBackend struct {
 	*framework.Backend
-	providerLock      sync.RWMutex
-	provider          *oidc.Provider
-	providerCtx       context.Context
-	providerCtxCancel context.CancelFunc
-	httpClient        *http.Client
-	adminTokenLock    sync.RWMutex
-	adminToken        string
-	adminTokenExpiry  time.Time
+	adminTokenLock   sync.RWMutex
+	adminToken       string
+	adminTokenExpiry time.Time
+	iamHelperLock    sync.RWMutex
+	iamHelper        iamHelper
 }
 
-func Backend(c *logical.BackendConfig) *ibmcloudAuthBackend {
-	b := &ibmcloudAuthBackend{}
-	b.providerCtx, b.providerCtxCancel = context.WithCancel(context.Background())
-	b.httpClient = cleanhttp.DefaultPooledClient()
+func Backend(c *logical.BackendConfig) *ibmCloudAuthBackend {
+	b := &ibmCloudAuthBackend{}
+	b.iamHelper = new(ibmCloudHelper)
+	b.iamHelper.Init()
 
 	b.Backend = &framework.Backend{
 		AuthRenew:   b.pathLoginRenew,
@@ -63,14 +56,14 @@ func Backend(c *logical.BackendConfig) *ibmcloudAuthBackend {
 	return b
 }
 
-func (b *ibmcloudAuthBackend) invalidate(ctx context.Context, key string) {
+func (b *ibmCloudAuthBackend) invalidate(ctx context.Context, key string) {
 	switch key {
 	case "config":
 		b.reset()
 	}
 }
 
-func (b *ibmcloudAuthBackend) reset() {
+func (b *ibmCloudAuthBackend) reset() {
 	b.adminTokenLock.Lock()
 	unlockFunc := b.adminTokenLock.Unlock
 	defer func() { unlockFunc() }()
@@ -79,77 +72,11 @@ func (b *ibmcloudAuthBackend) reset() {
 	b.adminToken = ""
 }
 
-func (b *ibmcloudAuthBackend) cleanup(_ context.Context) {
-	b.providerLock.Lock()
-	if b.providerCtxCancel != nil {
-		b.providerCtxCancel()
-	}
-	b.providerLock.Unlock()
+func (b *ibmCloudAuthBackend) cleanup(_ context.Context) {
+	b.iamHelper.Cleanup()
 }
 
-func (b *ibmcloudAuthBackend) getProvider() (*oidc.Provider, error) {
-	b.providerLock.RLock()
-	unlockFunc := b.providerLock.RUnlock
-	defer func() { unlockFunc() }()
-
-	if b.provider != nil {
-		return b.provider, nil
-	}
-
-	b.providerLock.RUnlock()
-	b.providerLock.Lock()
-	unlockFunc = b.providerLock.Unlock
-
-	if b.provider != nil {
-		return b.provider, nil
-	}
-
-	provider, err := oidc.NewProvider(b.providerCtx, iamIdentityEndpointDefault)
-	if err != nil {
-		return nil, errwrap.Wrapf("error creating provider with given values: {{err}}", err)
-	}
-
-	b.provider = provider
-	return provider, nil
-}
-
-/**
-Verifies an IBM Cloud IAM token. If successful, it will return a tokenInfo
-with relevant items contained in the token.
-*/
-func (b *ibmcloudAuthBackend) verifyToken(ctx context.Context, token string) (*tokenInfo, *logical.Response) {
-	// verify the token
-	provider, err := b.getProvider()
-	if err != nil {
-		return nil, logical.ErrorResponse("unable to successfully parse all claims from token: %s", err)
-	}
-
-	oidcConfig := &oidc.Config{
-		SkipClientIDCheck: true,
-	}
-	verifier := provider.Verifier(oidcConfig)
-	idToken, err := verifier.Verify(ctx, token)
-	if err != nil {
-		return nil, logical.ErrorResponse("an error occurred verifying the token %s", err)
-	}
-
-	// Get the IAM access token claims we are interested in
-	iamAccessTokenClaims := iamAccessTokenClaims{}
-	if err := idToken.Claims(&iamAccessTokenClaims); err != nil {
-		return nil, logical.ErrorResponse("unable to successfully parse all claims from token: %s", err)
-	}
-
-	return &tokenInfo{
-		IAMid:       iamAccessTokenClaims.IAMID,
-		Identifier:  iamAccessTokenClaims.Identifier,
-		SubjectType: iamAccessTokenClaims.SubjectType,
-		Subject:     idToken.Subject,
-		Expiry:      idToken.Expiry,
-	}, nil
-
-}
-
-func (b *ibmcloudAuthBackend) getAdminToken(ctx context.Context, s logical.Storage) (string, error) {
+func (b *ibmCloudAuthBackend) getAdminToken(ctx context.Context, s logical.Storage) (string, error) {
 	b.adminTokenLock.RLock()
 	unlockFunc := b.adminTokenLock.RUnlock
 	defer func() { unlockFunc() }()
@@ -174,12 +101,12 @@ func (b *ibmcloudAuthBackend) getAdminToken(ctx context.Context, s logical.Stora
 		return "", errors.New("no API key was set in the configuration. Token login requires the auth plugin to be configured with an API key")
 	}
 
-	token, err := obtainToken(b.httpClient, iamIdentityEndpointDefault, config.APIKey)
+	token, err := b.iamHelper.ObtainToken(config.APIKey)
 	if err != nil {
 		b.Logger().Error("failed to obtain the access token using the configured API key configuration", "error", err)
 		return "", err
 	}
-	adminTokenInfo, resp := b.verifyToken(ctx, token)
+	adminTokenInfo, resp := b.iamHelper.VerifyToken(ctx, token)
 	if resp != nil {
 		return "", resp.Error()
 	}

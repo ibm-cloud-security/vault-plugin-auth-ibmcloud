@@ -86,7 +86,7 @@ func TestConfigDelete(t *testing.T) {
 	}
 }
 
-func testConfigCreate(t *testing.T, b *ibmcloudAuthBackend, s logical.Storage, d map[string]interface{}) error {
+func testConfigCreate(t *testing.T, b *ibmCloudAuthBackend, s logical.Storage, d map[string]interface{}) error {
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.CreateOperation,
 		Path:      fmt.Sprintf("config"),

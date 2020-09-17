@@ -11,7 +11,7 @@ import (
 	"github.com/hashicorp/vault/sdk/logical"
 )
 
-func pathLogin(b *ibmcloudAuthBackend) *framework.Path {
+func pathLogin(b *ibmCloudAuthBackend) *framework.Path {
 	return &framework.Path{
 		Pattern: "login",
 		Fields: map[string]*framework.FieldSchema{
@@ -48,7 +48,7 @@ func pathLogin(b *ibmcloudAuthBackend) *framework.Path {
 	}
 }
 
-func (b *ibmcloudAuthBackend) pathAuthLogin(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+func (b *ibmCloudAuthBackend) pathAuthLogin(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	roleName, ok := data.Get(roleField).(string)
 	if !ok || roleName == "" {
 		return logical.ErrorResponse(fmt.Sprintf("role name is required: %s", roleField)), nil
@@ -89,14 +89,14 @@ func (b *ibmcloudAuthBackend) pathAuthLogin(ctx context.Context, req *logical.Re
 	}
 
 	if apiKey != "" {
-		callerToken, err = obtainToken(b.httpClient, iamIdentityEndpointDefault, apiKey)
+		callerToken, err = b.iamHelper.ObtainToken(apiKey)
 		if err != nil {
 			b.Logger().Debug("obtain user token failed", "error", err)
 			return nil, logical.ErrPermissionDenied
 		}
 	}
 
-	callerTokenInfo, resp := b.verifyToken(ctx, callerToken)
+	callerTokenInfo, resp := b.iamHelper.VerifyToken(ctx, callerToken)
 	if resp != nil {
 		return resp, nil
 	}
@@ -134,7 +134,7 @@ func (b *ibmcloudAuthBackend) pathAuthLogin(ctx context.Context, req *logical.Re
 	}, nil
 }
 
-func (b *ibmcloudAuthBackend) pathLoginRenew(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
+func (b *ibmCloudAuthBackend) pathLoginRenew(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	roleName, ok := req.Auth.Metadata[roleField]
 	if roleName == "" {
 		return logical.ErrorResponse("role name metadata not associated with auth token, invalid"), nil
@@ -167,12 +167,12 @@ func (b *ibmcloudAuthBackend) pathLoginRenew(ctx context.Context, req *logical.R
 	apiKeyRaw, ok := req.Auth.InternalData["apiKey"]
 	if ok {
 		apiKey := apiKeyRaw.(string)
-		userToken, err := obtainToken(b.httpClient, iamIdentityEndpointDefault, apiKey)
+		userToken, err := b.iamHelper.ObtainToken(apiKey)
 		if err != nil {
 			b.Logger().Debug("obtain user token failed", "error", err)
 			return logical.ErrorResponse("error reauthorizing with the token's stored API key, cannot renew"), nil
 		}
-		_, resp := b.verifyToken(ctx, userToken)
+		_, resp := b.iamHelper.VerifyToken(ctx, userToken)
 		if resp != nil {
 			return resp, nil
 		}
@@ -194,14 +194,14 @@ func (b *ibmcloudAuthBackend) pathLoginRenew(ctx context.Context, req *logical.R
 	return resp, nil
 }
 
-func (b *ibmcloudAuthBackend) verifyBoundEntities(accessToken, subject, iamID string, role *ibmCloudRole) error {
+func (b *ibmCloudAuthBackend) verifyBoundEntities(accessToken, subject, iamID string, role *ibmCloudRole) error {
 	// Check for the subject in the bound subject list
 	if !strutil.StrListContains(role.BoundSubscriptionsIDs, subject) {
 		var err error
 		// Check the access groups next
 		subjectFoundInGroup := false
 		for _, group := range role.BoundAccessGroupIDs {
-			if err = checkGroupMembership(b.httpClient, group, iamID, accessToken); err == nil {
+			if err = b.iamHelper.CheckGroupMembership(group, iamID, accessToken); err == nil {
 				subjectFoundInGroup = true
 				break
 			}
@@ -214,7 +214,7 @@ func (b *ibmcloudAuthBackend) verifyBoundEntities(accessToken, subject, iamID st
 	return nil
 }
 
-func (b *ibmcloudAuthBackend) verifyAccountAccess(ctx context.Context, stg logical.Storage, adminToken, identifier, iamID, subjectType string) error {
+func (b *ibmCloudAuthBackend) verifyAccountAccess(ctx context.Context, stg logical.Storage, adminToken, identifier, iamID, subjectType string) error {
 
 	config, err := b.config(ctx, stg)
 	if err != nil {
@@ -223,9 +223,9 @@ func (b *ibmcloudAuthBackend) verifyAccountAccess(ctx context.Context, stg logic
 	}
 
 	if subjectType == serviceIDSubjectType {
-		return checkServiceIDAccount(b.httpClient, adminToken, identifier, config.Account)
+		return b.iamHelper.CheckServiceIDAccount(adminToken, identifier, config.Account)
 	} else {
-		return checkUserIDAccount(b.httpClient, adminToken, iamID, config.Account)
+		return b.iamHelper.CheckUserIDAccount(adminToken, iamID, config.Account)
 	}
 }
 
