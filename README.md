@@ -7,20 +7,19 @@ User accounts or service IDs can sign in using an IBM Cloud IAM access token or 
 
 ## Installation 
 
-Build the plugin:
-`go build -o ibmcloud cmd/ibmcloud/main.go`
+The plugin must be built before it is installed. Follow the steps in [Developing](#Developing) to build
+the plugin executable.
 
-
-Copy the executable into Vault's configured plugin folder
-
+Copy the executable into Vault's configured plugin folder:
+`cp bin/vault-plugin-auth-ibmcloud $VAULT_INSTALL/plugins`
 
 Register the plugin:
 ```
-export SHA256=$(shasum -a 256 "ibmcloud" | cut -d' ' -f1)
-vault plugin register -sha256=${SHA256} auth ibmcloud
+export SHA256=$(shasum -a 256 "bin/vault-plugin-auth-ibmcloud" | cut -d' ' -f1)
+vault plugin register -sha256=${SHA256} auth vault-plugin-auth-ibmcloud
 ```
 
-Enable (mount) the plugin: `vault auth enable ibmcloud`
+Enable (mount) the plugin: `vault auth enable -plugin-name="vault-plugin-auth-ibmcloud" -path="ibmcloud" plugin`
 
 ## Usage
 The general usage pattern is for the administrator to create one or more roles which
@@ -323,4 +322,47 @@ $ curl \
   },
   "...": "..."
 }
+```
+
+## Developing
+
+For local dev first make sure Go is properly installed, including
+setting up a [GOPATH](https://golang.org/doc/code.html#GOPATH).
+Next, clone this repository into your `GOPATH`:
+
+```sh
+$ mkdir -p $GOPATH/src/github.com/ibm-cloud-security
+$ git clone https://github.com/ibm-cloud-security/vault-plugin-auth-ibmcloud $GOPATH/src/github.com/ibm-cloud-security/
+$ cd $GOPATH/src/github.com/ibm-cloud-security/vault-plugin-auth-ibmcloud
+```
+
+You can then download any required build tools by bootstrapping your
+environment:
+
+```sh
+$ make bootstrap
+```
+
+To compile a development version of this plugin, run `make` or `make dev`.
+This will put the plugin binary in the `bin` and `$GOPATH/bin` folders. `dev`
+mode will only generate the binary for your platform and is faster:
+
+```sh
+$ make
+$ make dev
+```
+
+For local development, use Vault's "dev" mode for fast setup:
+
+```sh
+$ vault server -dev -dev-plugin-dir="$(pwd)/bin"
+```
+
+The plugin will automatically be added to the catalog with the name
+"vault-plugin-auth-ibmcloud". Run the following command to enable this new auth
+method as a plugin:
+
+```sh
+$ vault auth enable -plugin-name="vault-plugin-auth-ibmcloud" -path="ibmcloud" plugin
+Success! Enabled vault-plugin-auth-ibmcloud auth method at: ibmcloud/
 ```

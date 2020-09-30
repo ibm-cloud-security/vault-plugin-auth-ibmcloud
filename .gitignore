@@ -4,7 +4,6 @@
 *.dll
 *.so
 *.dylib
-/ibmcloud
 
 .idea
 
@@ -13,6 +12,18 @@
 
 # Output of the go coverage tool, specifically when used with LiteIDE
 *.out
+
+ Compiled binaries
+/bin/
+/pkg/
+/dist/
+
+# Local development tmp
+/tmp/
+
+.DS_Store
+
+
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
