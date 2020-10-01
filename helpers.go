@@ -17,7 +17,7 @@ func getURL(endpoint, path string, pathReplacements ...string) string {
 func httpRequest(client *http.Client, r *http.Request) ([]byte, int, error) {
 	resp, err := client.Do(r)
 	if err != nil {
-		return nil, resp.StatusCode, err
+		return nil, 0, err
 	}
 	defer closeResponse(resp)
 

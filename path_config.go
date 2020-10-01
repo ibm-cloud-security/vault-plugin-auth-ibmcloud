@@ -11,11 +11,11 @@ func pathConfig(b *ibmCloudAuthBackend) *framework.Path {
 	return &framework.Path{
 		Pattern: "config",
 		Fields: map[string]*framework.FieldSchema{
-			apiKeyField: &framework.FieldSchema{
+			apiKeyField: {
 				Type:        framework.TypeString,
 				Description: "The administrator API key.",
 			},
-			accountIDField: &framework.FieldSchema{
+			accountIDField: {
 				Type:        framework.TypeString,
 				Description: "The account ID.",
 			},

@@ -14,7 +14,7 @@ import (
 // pathsRole returns the path configurations for the CRUD operations on roles
 func pathsRole(b *ibmCloudAuthBackend) []*framework.Path {
 	p := []*framework.Path{
-		&framework.Path{
+		{
 			Pattern: "role/?",
 			Operations: map[logical.Operation]framework.OperationHandler{
 				logical.ListOperation: &framework.PathOperation{
@@ -24,18 +24,18 @@ func pathsRole(b *ibmCloudAuthBackend) []*framework.Path {
 			HelpSynopsis:    strings.TrimSpace(roleHelp["role-list"][0]),
 			HelpDescription: strings.TrimSpace(roleHelp["role-list"][1]),
 		},
-		&framework.Path{
+		{
 			Pattern: "role/" + framework.GenericNameRegex("name"),
 			Fields: map[string]*framework.FieldSchema{
-				"name": &framework.FieldSchema{
+				"name": {
 					Type:        framework.TypeString,
 					Description: "Name of the role.",
 				},
-				"bound_subjects": &framework.FieldSchema{
+				"bound_subjects": {
 					Type:        framework.TypeCommaStringSlice,
 					Description: `Comma-separated list of subscription ids that login is restricted to.`,
 				},
-				"bound_access_group_ids": &framework.FieldSchema{
+				"bound_access_group_ids": {
 					Type:        framework.TypeCommaStringSlice,
 					Description: `Comma-separated list of IAM Access Group ids that login is restricted to.`,
 				},
