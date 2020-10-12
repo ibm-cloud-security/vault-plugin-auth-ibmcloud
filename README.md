@@ -328,12 +328,11 @@ $ curl \
 
 For local dev first make sure Go is properly installed, including
 setting up a [GOPATH](https://golang.org/doc/code.html#GOPATH).
-Next, clone this repository into your `GOPATH`:
+Next, clone this repository:
 
 ```sh
-$ mkdir -p $GOPATH/src/github.com/ibm-cloud-security
-$ git clone https://github.com/ibm-cloud-security/vault-plugin-auth-ibmcloud $GOPATH/src/github.com/ibm-cloud-security/
-$ cd $GOPATH/src/github.com/ibm-cloud-security/vault-plugin-auth-ibmcloud
+$ git clone https://github.com/ibm-cloud-security/vault-plugin-auth-ibmcloud
+$ cd vault-plugin-auth-ibmcloud
 ```
 
 You can then download any required build tools by bootstrapping your
