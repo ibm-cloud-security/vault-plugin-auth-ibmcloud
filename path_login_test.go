@@ -61,7 +61,7 @@ func getTestRoles() map[string]map[string]interface{} {
 	expected to be called. The keys are the function names (e.g. "ObtainToken", "CheckUserIDAccount", etc).
 	If unspecified 0 is used.
 */
-func getMockedBackend(t *testing.T, loginUserTokenInfo *tokenInfo, ctrl *gomock.Controller, minCalls map[string]int) (*ibmCloudAuthBackend, logical.Storage) {
+func getMockedBackend(t *testing.T, loginUserTokenInfo *tokenInfo, ctrl *gomock.Controller, callCount map[string]int) (*ibmCloudAuthBackend, logical.Storage) {
 	t.Helper()
 
 	var configData = map[string]interface{}{
@@ -73,7 +73,7 @@ func getMockedBackend(t *testing.T, loginUserTokenInfo *tokenInfo, ctrl *gomock.
 	// For the adminKey we always return AdminToken, this lets enforce that the code is correctly using the admin token
 	// for the Check* calls.
 	mockHelper.EXPECT().ObtainToken("adminKey").Return("AdminToken", nil)
-	if minCalls["ObtainToken"] > 1 {
+	if callCount["ObtainToken"] > 1 {
 		// used for the API key login path
 		mockHelper.EXPECT().ObtainToken("user1APIKey").Return("userToken", nil)
 	}
@@ -87,14 +87,14 @@ func getMockedBackend(t *testing.T, loginUserTokenInfo *tokenInfo, ctrl *gomock.
 			return nil, logical.ErrorResponse("mock VerifyToken, invalid token: %s", token)
 		})
 	mockHelper.EXPECT().CheckUserIDAccount("AdminToken", loginUserTokenInfo.IAMid, "theAccountID").
-		MinTimes(minCalls["CheckUserIDAccount"]).DoAndReturn(func(iamToken, iamID, accountID string) error {
+		Times(callCount["CheckUserIDAccount"]).DoAndReturn(func(iamToken, iamID, accountID string) error {
 		if !strutil.StrListContains([]string{"iamID1", "iamID2", "iamID3"}, iamID) {
 			return fmt.Errorf("mock CheckUserIDAccount: user not in account: %s", iamID)
 		}
 		return nil
 	})
 	mockHelper.EXPECT().CheckServiceIDAccount("AdminToken", loginUserTokenInfo.Identifier, "theAccountID").
-		MinTimes(minCalls["CheckServiceIDAccount"]).DoAndReturn(func(iamToken, identifier, accountID string) error {
+		Times(callCount["CheckServiceIDAccount"]).DoAndReturn(func(iamToken, identifier, accountID string) error {
 		if !strutil.StrListContains([]string{"user4Identifier"}, identifier) {
 			return fmt.Errorf("mock CheckServiceIDAccount: serviceID not in account: %s", identifier)
 		}
@@ -102,7 +102,7 @@ func getMockedBackend(t *testing.T, loginUserTokenInfo *tokenInfo, ctrl *gomock.
 	})
 
 	mockHelper.EXPECT().CheckGroupMembership(gomock.Any(), loginUserTokenInfo.IAMid, "AdminToken").
-		MinTimes(minCalls["CheckGroupMembership"]).DoAndReturn(func(groupID, iamID, iamToken string) error {
+		Times(callCount["CheckGroupMembership"]).DoAndReturn(func(groupID, iamID, iamToken string) error {
 		// check access group "group3" members:
 		if groupID == "group3" && strutil.StrListContains([]string{"iamID3", "iamID4"}, iamID) {
 			return nil
@@ -134,11 +134,11 @@ func TestLoginSuccessUserInList(t *testing.T) {
 		SubjectType: "n/a",
 		Subject:     "user1",
 	}
-	minCalls := map[string]int{
+	callCounts := map[string]int{
 		"CheckUserIDAccount": 1,
 	}
 
-	b, s := getMockedBackend(t, &ti, ctrl, minCalls)
+	b, s := getMockedBackend(t, &ti, ctrl, callCounts)
 
 	var loginData = map[string]interface{}{
 		"token": "userToken",
@@ -161,12 +161,12 @@ func TestLoginAPIKey(t *testing.T) {
 		SubjectType: "n/a",
 		Subject:     "user1",
 	}
-	minCalls := map[string]int{
+	callCounts := map[string]int{
 		"CheckUserIDAccount": 1,
 		"ObtainToken":        2,
 	}
 
-	b, s := getMockedBackend(t, &ti, ctrl, minCalls)
+	b, s := getMockedBackend(t, &ti, ctrl, callCounts)
 
 	var loginData = map[string]interface{}{
 		"api_key": "user1APIKey",
@@ -189,11 +189,11 @@ func TestLoginSuccessUserInGroup(t *testing.T) {
 		SubjectType: "n/a",
 		Subject:     "user3",
 	}
-	minCalls := map[string]int{
+	callCounts := map[string]int{
 		"CheckUserIDAccount":   1,
-		"CheckGroupMembership": 1,
+		"CheckGroupMembership": 3,
 	}
-	b, s := getMockedBackend(t, &ti, ctrl, minCalls)
+	b, s := getMockedBackend(t, &ti, ctrl, callCounts)
 
 	var loginData = map[string]interface{}{
 		"token": "userToken",
@@ -220,12 +220,12 @@ func TestLoginSuccessServiceIDInGroup(t *testing.T) {
 		Subject:     "user4",
 		Identifier:  "user4Identifier",
 	}
-	minCalls := map[string]int{
+	callCounts := map[string]int{
 		"CheckServiceIDAccount": 1,
-		"CheckGroupMembership":  1,
+		"CheckGroupMembership":  3,
 	}
 
-	b, s := getMockedBackend(t, &ti, ctrl, minCalls)
+	b, s := getMockedBackend(t, &ti, ctrl, callCounts)
 
 	var loginData = map[string]interface{}{
 		"token": "userToken",
@@ -248,11 +248,11 @@ func TestLoginFailureUserNotInGroup(t *testing.T) {
 		SubjectType: "n/a",
 		Subject:     "user1",
 	}
-	minCalls := map[string]int{
+	callCounts := map[string]int{
 		"CheckUserIDAccount":   1,
-		"CheckGroupMembership": 1,
+		"CheckGroupMembership": 3,
 	}
-	b, s := getMockedBackend(t, &ti, ctrl, minCalls)
+	b, s := getMockedBackend(t, &ti, ctrl, callCounts)
 
 	var loginData = map[string]interface{}{
 		"token": "userToken",
@@ -285,10 +285,10 @@ func TestLoginFailureUserNoAccountAccess(t *testing.T) {
 		SubjectType: "n/a",
 		Subject:     "user5",
 	}
-	minCalls := map[string]int{
+	callCounts := map[string]int{
 		"CheckUserIDAccount": 1,
 	}
-	b, s := getMockedBackend(t, &ti, ctrl, minCalls)
+	b, s := getMockedBackend(t, &ti, ctrl, callCounts)
 
 	var loginData = map[string]interface{}{
 		"token": "userToken",
@@ -322,10 +322,10 @@ func TestLoginFailureServiceIDNoAccountAccess(t *testing.T) {
 		Identifier:  "user6Identifier",
 		Subject:     "user6",
 	}
-	minCalls := map[string]int{
+	callCounts := map[string]int{
 		"CheckServiceIDAccount": 1,
 	}
-	b, s := getMockedBackend(t, &ti, ctrl, minCalls)
+	b, s := getMockedBackend(t, &ti, ctrl, callCounts)
 
 	var loginData = map[string]interface{}{
 		"token": "userToken",
@@ -357,8 +357,8 @@ func TestLoginFailureInvalidToken(t *testing.T) {
 		IAMid:   "iamID1",
 		Subject: "user1",
 	}
-	minCalls := map[string]int{}
-	b, s := getMockedBackend(t, &ti, ctrl, minCalls)
+	callCounts := map[string]int{}
+	b, s := getMockedBackend(t, &ti, ctrl, callCounts)
 
 	var loginData = map[string]interface{}{
 		"token": "badUserToken",
