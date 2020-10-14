@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"strings"
 	"testing"
+	"time"
 )
 
 /**
@@ -68,18 +69,29 @@ func getMockedBackend(t *testing.T, loginUserTokenInfo *tokenInfo, ctrl *gomock.
 		"api_key":    "adminKey",
 		"account_id": "theAccountID",
 	}
+	// Set defaults for common calls
+	adminObtainTokenCalls := callCount["ObtainToken_admin"]
+	adminVerifyTokenCalls := callCount["VerifyToken_admin"]
+	userVerifyTokenCalls := callCount["VerifyToken_user"]
+	if adminObtainTokenCalls == 0 {
+		adminObtainTokenCalls = 1
+	}
+	if adminVerifyTokenCalls == 0 {
+		adminVerifyTokenCalls = 1
+	}
+	if userVerifyTokenCalls == 0 {
+		userVerifyTokenCalls = 1
+	}
 
 	mockHelper := NewMockiamHelper(ctrl)
 	// For the adminKey we always return AdminToken, this lets enforce that the code is correctly using the admin token
 	// for the Check* calls.
-	mockHelper.EXPECT().ObtainToken("adminKey").Return("AdminToken", nil)
-	if callCount["ObtainToken"] > 1 {
-		// used for the API key login path
-		mockHelper.EXPECT().ObtainToken("user1APIKey").Return("userToken", nil)
-	}
+	mockHelper.EXPECT().ObtainToken("adminKey").Times(adminObtainTokenCalls).Return("AdminToken", nil)
+	mockHelper.EXPECT().ObtainToken("user1APIKey").Times(callCount["ObtainToken_user"]).Return("userToken", nil)
 
-	mockHelper.EXPECT().VerifyToken(gomock.Any(), "AdminToken").Return(&tokenInfo{}, nil)
+	mockHelper.EXPECT().VerifyToken(gomock.Any(), "AdminToken").Times(adminVerifyTokenCalls).Return(&tokenInfo{Expiry: time.Now().Add(time.Hour)}, nil)
 	mockHelper.EXPECT().VerifyToken(gomock.Any(), gomock.Not(gomock.Eq("AdminToken"))).
+		Times(userVerifyTokenCalls).
 		DoAndReturn(func(ctx context.Context, token string) (*tokenInfo, *logical.Response) {
 			if token == "userToken" { // for test purposes we expect all user tokens to be "userToken"
 				return loginUserTokenInfo, nil
@@ -145,7 +157,7 @@ func TestLoginSuccessUserInList(t *testing.T) {
 		"role":  "testRole1",
 	}
 
-	if err := testLoginSuccessful(t, b, s, ti, loginData, getTestRoles()["testRole1"]); err != nil {
+	if _, err := testLoginSuccessful(t, b, s, ti, loginData, getTestRoles()["testRole1"]); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -163,7 +175,7 @@ func TestLoginAPIKey(t *testing.T) {
 	}
 	callCounts := map[string]int{
 		"CheckUserIDAccount": 1,
-		"ObtainToken":        2,
+		"ObtainToken_user":   1,
 	}
 
 	b, s := getMockedBackend(t, &ti, ctrl, callCounts)
@@ -173,7 +185,7 @@ func TestLoginAPIKey(t *testing.T) {
 		"role":    "testRole1",
 	}
 
-	if err := testLoginSuccessful(t, b, s, ti, loginData, getTestRoles()["testRole1"]); err != nil {
+	if _, err := testLoginSuccessful(t, b, s, ti, loginData, getTestRoles()["testRole1"]); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -200,7 +212,7 @@ func TestLoginSuccessUserInGroup(t *testing.T) {
 		"role":  "testRole2",
 	}
 
-	if err := testLoginSuccessful(t, b, s, ti, loginData, getTestRoles()["testRole2"]); err != nil {
+	if _, err := testLoginSuccessful(t, b, s, ti, loginData, getTestRoles()["testRole2"]); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -232,7 +244,7 @@ func TestLoginSuccessServiceIDInGroup(t *testing.T) {
 		"role":  "testRole2",
 	}
 
-	if err := testLoginSuccessful(t, b, s, ti, loginData, getTestRoles()["testRole2"]); err != nil {
+	if _, err := testLoginSuccessful(t, b, s, ti, loginData, getTestRoles()["testRole2"]); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -414,7 +426,7 @@ func TestLoginConfigNotSet(t *testing.T) {
 	}
 }
 
-func testLoginSuccessful(t *testing.T, b *ibmCloudAuthBackend, s logical.Storage, ti tokenInfo, loginData, roleData map[string]interface{}) error {
+func testLoginSuccessful(t *testing.T, b *ibmCloudAuthBackend, s logical.Storage, ti tokenInfo, loginData, roleData map[string]interface{}) (*logical.Auth, error) {
 	t.Helper()
 	resp, err := b.HandleRequest(context.Background(), &logical.Request{
 		Operation: logical.UpdateOperation,
@@ -423,16 +435,16 @@ func testLoginSuccessful(t *testing.T, b *ibmCloudAuthBackend, s logical.Storage
 		Storage:   s,
 	})
 	if err != nil {
-		return fmt.Errorf("err: %v", err)
+		return nil, fmt.Errorf("err: %v", err)
 	}
 	if resp.IsError() {
-		return fmt.Errorf(resp.Error().Error())
+		return nil, fmt.Errorf(resp.Error().Error())
 	}
 	if resp.Auth == nil {
-		return fmt.Errorf("received nil auth data")
+		return nil, fmt.Errorf("received nil auth data")
 	}
 	if resp.Auth.Metadata == nil {
-		return fmt.Errorf("received nil auth metadata data")
+		return nil, fmt.Errorf("received nil auth metadata data")
 	}
 
 	expectedMeta := map[string]string{
@@ -445,7 +457,269 @@ func testLoginSuccessful(t *testing.T, b *ibmCloudAuthBackend, s logical.Storage
 	assert.Equal(t, expectedMeta, resp.Auth.Metadata)
 
 	if !policyutil.EquivalentPolicies(resp.Auth.Policies, roleData["token_policies"].([]string)) {
-		return fmt.Errorf("policy mismatch, expected %v but got %v", roleData["policies"].([]string), resp.Auth.Policies)
+		return nil, fmt.Errorf("policy mismatch, expected %v but got %v", roleData["policies"].([]string), resp.Auth.Policies)
 	}
-	return nil
+	return resp.Auth, nil
+}
+
+func TestRenewSuccessful(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	// Login first
+	ti := tokenInfo{
+		IAMid:       "iamID4",
+		SubjectType: serviceIDSubjectType,
+		Subject:     "user4",
+		Identifier:  "user4Identifier",
+	}
+	callCounts := map[string]int{
+		"CheckServiceIDAccount": 2,
+		"CheckGroupMembership":  6,
+	}
+
+	b, s := getMockedBackend(t, &ti, ctrl, callCounts)
+
+	var loginData = map[string]interface{}{
+		"token": "userToken",
+		"role":  "testRole2",
+	}
+
+	auth, err := testLoginSuccessful(t, b, s, ti, loginData, getTestRoles()["testRole2"])
+	if err != nil {
+		t.Fatal("unexpected", err)
+	}
+
+	// Verify renew is successful
+	renewReq := generateRenewRequest(s, auth)
+	resp, err := b.HandleRequest(context.Background(), renewReq)
+	if err != nil || (resp != nil && resp.IsError()) {
+		t.Fatalf("err:%v resp:%#v", err, resp)
+	}
+}
+
+func TestRenewSuccessfulWithKey(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	// These call counts set the mocked backend up for both login and renew
+	callCounts := map[string]int{
+		"CheckUserIDAccount": 2,
+		"ObtainToken_user":   2,
+		"VerifyToken_user":   2,
+	}
+
+	auth, b, s := loginUser1RenewTest(t, ctrl, callCounts)
+	// Verify renew is successful
+	renewReq := generateRenewRequest(s, auth)
+	resp, err := b.HandleRequest(context.Background(), renewReq)
+	if err != nil || (resp != nil && resp.IsError()) {
+		t.Fatalf("err:%v resp:%#v", err, resp)
+	}
+}
+
+func TestRenewFailurePolicyChanges(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	callCounts := map[string]int{
+		"CheckUserIDAccount": 1,
+		"ObtainToken_user":   1,
+		"VerifyToken_user":   1,
+	}
+	auth, b, s := loginUser1RenewTest(t, ctrl, callCounts)
+	// Update the role policies
+	testRoleUpdate(t, b, s, map[string]interface{}{"name": "testRole1", "token_policies": []string{"new", "policies"}})
+
+	// Verify renew fails
+	testRenewFailure(t, auth, b, s, "policies on role 'testRole1' have changed")
+}
+
+func TestRenewFailureRoleRemoved(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	callCounts := map[string]int{
+		"CheckUserIDAccount": 1,
+		"ObtainToken_user":   1,
+		"VerifyToken_user":   1,
+	}
+	auth, b, s := loginUser1RenewTest(t, ctrl, callCounts)
+
+	// Remove the role
+	resp, err := b.HandleRequest(context.Background(), &logical.Request{
+		Operation: logical.DeleteOperation,
+		Path:      fmt.Sprintf("role/%s", "testRole1"),
+		Storage:   s,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp != nil && resp.IsError() {
+		t.Fatal(resp.Error())
+	}
+
+	// Verify renew fails
+	testRenewFailure(t, auth, b, s, "role 'testRole1' no longer exists")
+}
+
+func TestRenewFailureConfigChanged(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	callCounts := map[string]int{
+		"CheckUserIDAccount": 1,
+		"ObtainToken_user":   1,
+		"VerifyToken_user":   1,
+	}
+	auth, b, s := loginUser1RenewTest(t, ctrl, callCounts)
+
+	// Empty a field in the config
+	err := testConfigCreate(t, b, s, map[string]interface{}{apiKeyField: "asdf", accountIDField: ""})
+	if err != nil {
+		t.Fatalf("Changing the config failed %v", err)
+	}
+	renewReq := generateRenewRequest(s, auth)
+	resp, err := b.HandleRequest(context.Background(), renewReq)
+	if err == nil {
+		t.Fatalf("expected an error, received resp %v, err %v", resp, err)
+	}
+	if !strings.Contains(err.Error(), "no account ID was set in the configuration") {
+		t.Fatalf("expected %s to be in error %v", "no account ID was set in the configuration", err)
+	}
+}
+
+func TestRenewFailureRoleAccessChanged(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	callCounts := map[string]int{
+		"CheckUserIDAccount": 2,
+		"ObtainToken_user":   2,
+		"VerifyToken_user":   2,
+	}
+	auth, b, s := loginUser1RenewTest(t, ctrl, callCounts)
+
+	// Remove user1 from the subject list
+	testRoleUpdate(t, b, s, map[string]interface{}{"name": "testRole1", "bound_subjects": []string{"user2"}})
+	renewReq := generateRenewRequest(s, auth)
+	resp, err := b.HandleRequest(context.Background(), renewReq)
+	if err == nil {
+		t.Fatalf("expected an error, received resp %v, err %v", resp, err)
+	}
+	if !strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("expected %s to be in error %v", "permission denied", err)
+	}
+}
+
+func TestRenewFailureToObtainToken(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	callCounts := map[string]int{
+		"CheckUserIDAccount": 1,
+		"ObtainToken_user":   1,
+		"VerifyToken_user":   1,
+	}
+	auth, b, s := loginUser1RenewTest(t, ctrl, callCounts)
+
+	// Now that login is complete, change the backend's mock IAM helper to fail on obtaining the user token
+	mockHelper := NewMockiamHelper(ctrl)
+	mockHelper.EXPECT().ObtainToken("user1APIKey").Times(1).Return("", fmt.Errorf("mock login failure"))
+	b.iamHelper = mockHelper
+	testRenewFailure(t, auth, b, s, "error reauthorizing with the token's stored API key")
+}
+
+func TestRenewFailureAccountAccessChanged(t *testing.T) {
+	t.Parallel()
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+
+	callCounts := map[string]int{
+		"CheckUserIDAccount": 1,
+		"ObtainToken_user":   1,
+		"VerifyToken_user":   1,
+	}
+	auth, b, s := loginUser1RenewTest(t, ctrl, callCounts)
+
+	// Now that login is complete, change the backend's mock IAM helper to fail on the account check
+	mockHelper := NewMockiamHelper(ctrl)
+	ti := tokenInfo{
+		IAMid:      "iamID1",
+		Subject:    "user1",
+		Identifier: "user1Identifier",
+	}
+	mockHelper.EXPECT().ObtainToken("user1APIKey").Times(1).Return("userToken", nil)
+	mockHelper.EXPECT().VerifyToken(gomock.Any(), gomock.Not(gomock.Eq("AdminToken"))).Times(1).Return(&ti, nil)
+	mockHelper.EXPECT().CheckUserIDAccount("AdminToken", "iamID1", "theAccountID").Times(1).
+		Return(fmt.Errorf("failed on userid account check"))
+	b.iamHelper = mockHelper
+	renewReq := generateRenewRequest(s, auth)
+	resp, err := b.HandleRequest(context.Background(), renewReq)
+	if err == nil {
+		t.Fatalf("expected an error, received resp %v, err %v", resp, err)
+	}
+	if !strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("expected %s to be in error %v", "permission denied", err)
+	}
+}
+
+func loginUser1RenewTest(t *testing.T, ctrl *gomock.Controller, callCounts map[string]int) (*logical.Auth, *ibmCloudAuthBackend, logical.Storage) {
+	t.Helper()
+	ti := tokenInfo{
+		IAMid:      "iamID1",
+		Subject:    "user1",
+		Identifier: "user1Identifier",
+	}
+
+	b, s := getMockedBackend(t, &ti, ctrl, callCounts)
+
+	var loginData = map[string]interface{}{
+		"api_key": "user1APIKey",
+		"role":    "testRole1",
+	}
+
+	auth, err := testLoginSuccessful(t, b, s, ti, loginData, getTestRoles()["testRole1"])
+	if err != nil {
+		t.Fatal("unexpected", err)
+	}
+	return auth, b, s
+}
+
+func testRenewFailure(t *testing.T, loginAuth *logical.Auth, b *ibmCloudAuthBackend, s logical.Storage, expectedError string) {
+	t.Helper()
+	renewReq := generateRenewRequest(s, loginAuth)
+	resp, err := b.HandleRequest(context.Background(), renewReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp == nil || !resp.IsError() {
+		t.Fatalf("expected error containing: %s", expectedError)
+	}
+	if !strings.Contains(resp.Error().Error(), expectedError) {
+		t.Fatalf("expected %s to be in error %v", expectedError, resp.Error())
+	}
+}
+
+func generateRenewRequest(s logical.Storage, auth *logical.Auth) *logical.Request {
+	renewReq := &logical.Request{
+		Operation: logical.RenewOperation,
+		Storage:   s,
+		Auth:      &logical.Auth{},
+	}
+	renewReq.Auth.InternalData = auth.InternalData
+	renewReq.Auth.Metadata = auth.Metadata
+	renewReq.Auth.LeaseOptions = auth.LeaseOptions
+	renewReq.Auth.Policies = auth.Policies
+	renewReq.Auth.TokenPolicies = auth.Policies
+	renewReq.Auth.Period = auth.Period
+
+	return renewReq
 }

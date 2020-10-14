@@ -164,7 +164,7 @@ func (b *ibmCloudAuthBackend) pathLoginRenew(ctx context.Context, req *logical.R
 		return nil, err
 	}
 
-	apiKeyRaw, ok := req.Auth.InternalData["apiKey"]
+	apiKeyRaw, ok := req.Auth.InternalData[apiKeyField]
 	if ok {
 		apiKey := apiKeyRaw.(string)
 		userToken, err := b.iamHelper.ObtainToken(apiKey)
