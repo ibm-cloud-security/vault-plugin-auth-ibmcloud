@@ -365,3 +365,4 @@ method as a plugin:
 $ vault auth enable -plugin-name="vault-plugin-auth-ibmcloud" -path="ibmcloud" plugin
 Success! Enabled vault-plugin-auth-ibmcloud auth method at: ibmcloud/
 ```
+ 
