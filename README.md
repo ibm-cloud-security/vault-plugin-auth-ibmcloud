@@ -5,7 +5,10 @@ This plugin allows for various IBM Cloud entities to authenticate with Vault.
 
 User accounts or service IDs can sign in using an IBM Cloud IAM access token or API key.
 
-## Installation 
+## Versions
+This version of the plugin was tested with Vault 1.6.0.
+
+## Installation
 
 The plugin must be built before it is installed. Follow the steps in [Developing](#Developing) to build
 the plugin executable.
@@ -327,7 +330,12 @@ $ curl \
 ## Developing
 
 For local dev first make sure Go is properly installed, including
-setting up a [GOPATH](https://golang.org/doc/code.html#GOPATH).
+setting up a [GOPATH](https://golang.org/doc/code.html#GOPATH). The version
+of Go that is installed should match the level required by the version of Vault
+that will be used. See [Vault's requirements](https://github.com/hashicorp/vault#developing-vault)
+for more information.
+
+
 Next, clone this repository:
 
 ```sh
