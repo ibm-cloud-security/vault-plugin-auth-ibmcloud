@@ -1,7 +1,7 @@
 TOOL?=vault-plugin-auth-ibmcloud
 TEST?=$$(go list ./... | grep -v /vendor/)
 EXTERNAL_TOOLS=\
-	github.com/mitchellh/gox
+	github.com/mitchellh/gox@v1.0.1
 BUILD_TAGS?=${TOOL}
 GOFMT_FILES?=$$(find . -name '*.go' | grep -v vendor)
 TEST_ARGS?=./...
@@ -38,7 +38,7 @@ generate:
 bootstrap:
 	@for tool in  $(EXTERNAL_TOOLS) ; do \
 		echo "Installing/Updating $$tool" ; \
-		go get -u $$tool; \
+		go install $$tool; \
 	done
 
 fmtcheck:
