@@ -3,6 +3,7 @@ package ibmcloudauth
 import (
 	"context"
 	"errors"
+
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/logical"
 )
@@ -18,6 +19,14 @@ func pathConfig(b *ibmCloudAuthBackend) *framework.Path {
 			accountIDField: {
 				Type:        framework.TypeString,
 				Description: "The account ID.",
+			},
+			iamEndpointField: {
+				Type:        framework.TypeString,
+				Description: "The custom or private IAM endpoint.",
+			},
+			userManagementEndpointField: {
+				Type:        framework.TypeString,
+				Description: "The custom or private User Management endpoint.",
 			},
 		},
 		ExistenceCheck: b.pathConfigExistenceCheck,
@@ -41,8 +50,10 @@ func pathConfig(b *ibmCloudAuthBackend) *framework.Path {
 }
 
 type ibmCloudConfig struct {
-	APIKey  string `json:"api_key"`
-	Account string `json:"account"`
+	APIKey                 string `json:"api_key"`
+	Account                string `json:"account"`
+	IAMEndpoint            string `json:"iam_endpoint"`
+	UserManagementEndpoint string `json:"user_management_endpoint"`
 }
 
 func (b *ibmCloudAuthBackend) config(ctx context.Context, s logical.Storage) (*ibmCloudConfig, error) {
@@ -92,6 +103,20 @@ func (b *ibmCloudAuthBackend) pathConfigWrite(ctx context.Context, req *logical.
 		return logical.ErrorResponse("the required field %s is missing", accountIDField), nil
 	}
 
+	iamEndpoint, ok := data.GetOk(iamEndpointField)
+	if ok {
+		config.IAMEndpoint = iamEndpoint.(string)
+	} else {
+		config.IAMEndpoint = iamEndpointFieldDefault
+	}
+
+	userMgmtEndpoint, ok := data.GetOk(userManagementEndpointField)
+	if ok {
+		config.UserManagementEndpoint = userMgmtEndpoint.(string)
+	} else {
+		config.UserManagementEndpoint = userMgmtEndpointDefault
+	}
+
 	entry, err := logical.StorageEntryJSON("config", config)
 	if err != nil {
 		return nil, err
@@ -122,8 +147,10 @@ func (b *ibmCloudAuthBackend) pathConfigRead(ctx context.Context, req *logical.R
 
 	resp := &logical.Response{
 		Data: map[string]interface{}{
-			apiKeyField:    displayKey,
-			accountIDField: config.Account,
+			apiKeyField:                 displayKey,
+			accountIDField:              config.Account,
+			iamEndpointField:            config.IAMEndpoint,
+			userManagementEndpointField: config.UserManagementEndpoint,
 		},
 	}
 	return resp, nil
@@ -154,6 +181,23 @@ func (b *ibmCloudAuthBackend) verifyPluginIsConfigured(ctx context.Context, req 
 	}
 
 	return nil
+}
+
+func (b *ibmCloudAuthBackend) getConfig(ctx context.Context, s logical.Storage) (*ibmCloudConfig, *logical.Response) {
+	// verify the plugin is configured
+	config, err := b.config(ctx, s)
+	if err != nil {
+		b.Logger().Error("failed to load configuration", "error", err)
+		return nil, logical.ErrorResponse("no configuration was found")
+	}
+	if config == nil || config.APIKey == "" {
+		return nil, logical.ErrorResponse("no API key was set in the configuration")
+	}
+	if config.Account == "" {
+		return nil, logical.ErrorResponse("no account ID was set in the configuration")
+	}
+
+	return config, nil
 }
 
 const confHelpSyn = `Configures credentials and account used to query the IBM Cloud IAM API to verify authenticating accounts`

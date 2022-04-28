@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
 	"github.com/hashicorp/vault/sdk/framework"
 	"github.com/hashicorp/vault/sdk/helper/cidrutil"
 	"github.com/hashicorp/vault/sdk/helper/policyutil"
@@ -136,6 +137,9 @@ func (b *ibmCloudAuthBackend) pathAuthLogin(ctx context.Context, req *logical.Re
 
 func (b *ibmCloudAuthBackend) pathLoginRenew(ctx context.Context, req *logical.Request, data *framework.FieldData) (*logical.Response, error) {
 	roleName, ok := req.Auth.Metadata[roleField]
+	if !ok {
+		return logical.ErrorResponse("an error occurred retrieving role name metadata"), nil
+	}
 	if roleName == "" {
 		return logical.ErrorResponse("role name metadata not associated with auth token, invalid"), nil
 	}

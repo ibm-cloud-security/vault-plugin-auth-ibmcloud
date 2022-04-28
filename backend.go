@@ -3,10 +3,11 @@ package ibmcloudauth
 import (
 	"context"
 	"errors"
-	"github.com/hashicorp/vault/sdk/framework"
-	"github.com/hashicorp/vault/sdk/logical"
 	"sync"
 	"time"
+
+	"github.com/hashicorp/vault/sdk/framework"
+	"github.com/hashicorp/vault/sdk/logical"
 )
 
 func Factory(ctx context.Context, conf *logical.BackendConfig) (logical.Backend, error) {
@@ -29,8 +30,6 @@ type ibmCloudAuthBackend struct {
 
 func Backend(c *logical.BackendConfig) *ibmCloudAuthBackend {
 	b := &ibmCloudAuthBackend{}
-	b.iamHelper = new(ibmCloudHelper)
-	b.iamHelper.Init()
 
 	b.Backend = &framework.Backend{
 		AuthRenew:   b.pathLoginRenew,
@@ -70,10 +69,19 @@ func (b *ibmCloudAuthBackend) reset() {
 
 	b.adminTokenExpiry = time.Now()
 	b.adminToken = ""
+
+	unlockIAMFunc := b.iamHelperLock.Unlock
+	defer func() { unlockIAMFunc() }()
+
+	b.iamHelperLock.Lock()
+	if b.iamHelper != nil {
+		b.iamHelper.Cleanup()
+		b.iamHelper = nil
+	}
 }
 
 func (b *ibmCloudAuthBackend) cleanup(_ context.Context) {
-	b.iamHelper.Cleanup()
+	b.reset()
 }
 
 func (b *ibmCloudAuthBackend) getAdminToken(ctx context.Context, s logical.Storage) (string, error) {
@@ -101,18 +109,50 @@ func (b *ibmCloudAuthBackend) getAdminToken(ctx context.Context, s logical.Stora
 		return "", errors.New("no API key was set in the configuration. Token login requires the auth plugin to be configured with an API key")
 	}
 
-	token, err := b.iamHelper.ObtainToken(config.APIKey)
+	iam, resp := b.getIAMHelper(ctx, s)
+	if resp != nil {
+		b.Logger().Error("failed to retrieve an IAM helper", "error", resp.Error())
+		return "", resp.Error()
+	}
+	token, err := iam.ObtainToken(config.APIKey)
 	if err != nil {
 		b.Logger().Error("failed to obtain the access token using the configured API key configuration", "error", err)
 		return "", err
 	}
-	adminTokenInfo, resp := b.iamHelper.VerifyToken(ctx, token)
+	adminTokenInfo, resp := iam.VerifyToken(ctx, token)
 	if resp != nil {
 		return "", resp.Error()
 	}
 	b.adminToken = token
 	b.adminTokenExpiry = adminTokenInfo.Expiry
 	return b.adminToken, nil
+}
+
+func (b *ibmCloudAuthBackend) getIAMHelper(ctx context.Context, s logical.Storage) (iamHelper, *logical.Response) {
+	b.iamHelperLock.RLock()
+	unlockFunc := b.iamHelperLock.RUnlock
+	defer func() { unlockFunc() }()
+
+	if b.iamHelper != nil {
+		return b.iamHelper, nil
+	}
+	b.iamHelperLock.RUnlock()
+
+	b.iamHelperLock.Lock()
+	unlockFunc = b.iamHelperLock.Unlock
+
+	if b.iamHelper != nil {
+		return b.iamHelper, nil
+	}
+
+	config, resp := b.getConfig(ctx, s)
+	if resp != nil {
+		return nil, resp
+	}
+	b.iamHelper = new(ibmCloudHelper)
+	b.iamHelper.Init(config.IAMEndpoint, config.UserManagementEndpoint)
+
+	return b.iamHelper, nil
 }
 
 const backendHelp = `

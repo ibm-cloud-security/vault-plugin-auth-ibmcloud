@@ -6,7 +6,7 @@ This plugin allows for various IBM Cloud entities to authenticate with Vault.
 User accounts or service IDs can sign in using an IBM Cloud IAM access token or API key.
 
 ## Versions
-This version of the plugin was tested with Vault 1.6.0.
+This version of the plugin was tested with Vault 1.9.4.
 
 ## Installation
 
@@ -51,6 +51,10 @@ Configures the auth method and must be done before authentication can succeed.
 membership for the all the access groups bound to the plugin's roles.
 * `account_id (string: <required>)` - An IBM Cloud account ID. The auth method will only authenticate users or service IDs that
 have access to this account.
+* `iam_endpoint (string: <optional>)` - The custom or private IAM endpoint. For example `https://private.iam.cloud.ibm.com`.
+If unspecified the public endpoint, `https://iam.cloud.ibm.com`, is used.
+* `user_management_endpoint (string: <optional>)` - The custom or private user management endpoint. For example `https://private.user-management.cloud.ibm.com`.
+If unspecified the public endpoint, `https://user-management.cloud.ibm.com`, is used.
 
 ### Sample Payload
 
@@ -90,7 +94,9 @@ $ curl \
 {
   "data": {
     "api_key": "<redacted>",
-    "account_id": "abd85726cbd..."
+    "account_id": "abd85726cbd...",
+    "iam_endpoint": "https://iam.cloud.ibm.com",
+    "user_management_endpoint": "https://user-management.cloud.ibm.com",
   },
   "...": "..."
 
