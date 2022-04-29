@@ -44,7 +44,8 @@ credentials will be used to verify user account and service ID account access an
 service ID providing the API key needs to have the following permissions:
 
 * `Viewer` on `Access Groups Service`
-* `Viewer` on `IAM Identity Service` 
+* `Viewer` on `IAM Identity Service`
+* `Operator` on `IAM Identity Service` if root credential rotation will be used
 * `Viewer` on `User Management Service` 
 
 Configures the auth method and must be done before authentication can succeed.
@@ -108,6 +109,38 @@ $ curl \
   },
   "...": "..."
 
+}
+```
+
+## Rotate Root Credentials
+
+Rotates the IBM Cloud API key used by Vault for this mount. A new key will be generated
+for same user or service ID and account as the existing API key. The configuration is updated
+and then the old API key is deleted.
+
+The ID of the new API key is returned in the response.
+
+
+| Method   | Path |
+|----------|-------------------------------------------------|
+| `POST`   |  `/auth/ibmcloud/config/rotate-root`                 |
+
+
+### Sample Request
+```shell script
+$ curl \
+    --header "X-Vault-Token: ..." \
+    --request POST \
+    https://127.0.0.1:8200/v1/auth/ibmcloud/config/rotate-root
+```
+
+### Sample Response
+```json
+{
+  "data": {
+    "api_key_id": "ApiKey-0abbbbbb-21cc-4dcc-a9cc-b59bc15c7aa1"
+  },
+  "...": "..."
 }
 ```
 

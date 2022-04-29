@@ -46,6 +46,7 @@ func Backend(c *logical.BackendConfig) *ibmCloudAuthBackend {
 			[]*framework.Path{
 				pathLogin(b),
 				pathConfig(b),
+				pathConfigRotateRoot(b),
 			},
 			pathsRole(b),
 		),
