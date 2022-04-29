@@ -145,6 +145,14 @@ func (b *ibmCloudAuthBackend) pathConfigRead(ctx context.Context, req *logical.R
 		displayKey = redacted
 	}
 
+	if config.IAMEndpoint == "" {
+		config.IAMEndpoint = iamEndpointFieldDefault
+	}
+
+	if config.UserManagementEndpoint == "" {
+		config.IAMEndpoint = userMgmtEndpointDefault
+	}
+
 	resp := &logical.Response{
 		Data: map[string]interface{}{
 			apiKeyField:                 displayKey,
@@ -195,6 +203,14 @@ func (b *ibmCloudAuthBackend) getConfig(ctx context.Context, s logical.Storage) 
 	}
 	if config.Account == "" {
 		return nil, logical.ErrorResponse("no account ID was set in the configuration")
+	}
+
+	if config.IAMEndpoint == "" {
+		config.IAMEndpoint = iamEndpointFieldDefault
+	}
+
+	if config.UserManagementEndpoint == "" {
+		config.UserManagementEndpoint = userMgmtEndpointDefault
 	}
 
 	return config, nil
