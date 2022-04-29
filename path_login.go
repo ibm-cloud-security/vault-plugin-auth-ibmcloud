@@ -89,15 +89,21 @@ func (b *ibmCloudAuthBackend) pathAuthLogin(ctx context.Context, req *logical.Re
 		return nil, err
 	}
 
+	iam, resp := b.getIAMHelper(ctx, req.Storage)
+	if resp != nil {
+		b.Logger().Error("failed to retrieve an IAM helper", "error", resp.Error())
+		return resp, nil
+	}
+
 	if apiKey != "" {
-		callerToken, err = b.iamHelper.ObtainToken(apiKey)
+		callerToken, err = iam.ObtainToken(apiKey)
 		if err != nil {
 			b.Logger().Debug("obtain user token failed", "error", err)
 			return nil, logical.ErrPermissionDenied
 		}
 	}
 
-	callerTokenInfo, resp := b.iamHelper.VerifyToken(ctx, callerToken)
+	callerTokenInfo, resp := iam.VerifyToken(ctx, callerToken)
 	if resp != nil {
 		return resp, nil
 	}
@@ -108,7 +114,7 @@ func (b *ibmCloudAuthBackend) pathAuthLogin(ctx context.Context, req *logical.Re
 		return nil, logical.ErrPermissionDenied
 	}
 
-	err = b.verifyBoundEntities(adminToken, callerTokenInfo.Subject, callerTokenInfo.IAMid, role)
+	err = b.verifyBoundEntities(ctx, req.Storage, adminToken, callerTokenInfo.Subject, callerTokenInfo.IAMid, role)
 	if err != nil {
 		return nil, err
 	}
@@ -168,15 +174,21 @@ func (b *ibmCloudAuthBackend) pathLoginRenew(ctx context.Context, req *logical.R
 		return nil, err
 	}
 
+	iam, resp := b.getIAMHelper(ctx, req.Storage)
+	if resp != nil {
+		b.Logger().Error("failed to retrieve an IAM helper", "error", resp.Error())
+		return resp, nil
+	}
+
 	apiKeyRaw, ok := req.Auth.InternalData[apiKeyField]
 	if ok {
 		apiKey := apiKeyRaw.(string)
-		userToken, err := b.iamHelper.ObtainToken(apiKey)
+		userToken, err := iam.ObtainToken(apiKey)
 		if err != nil {
 			b.Logger().Debug("obtain user token failed", "error", err)
 			return logical.ErrorResponse("error reauthorizing with the token's stored API key, cannot renew"), nil
 		}
-		_, resp := b.iamHelper.VerifyToken(ctx, userToken)
+		_, resp := iam.VerifyToken(ctx, userToken)
 		if resp != nil {
 			return resp, nil
 		}
@@ -187,25 +199,32 @@ func (b *ibmCloudAuthBackend) pathLoginRenew(ctx context.Context, req *logical.R
 		return nil, logical.ErrPermissionDenied
 	}
 
-	err = b.verifyBoundEntities(adminToken, subject, iamID, role)
+	err = b.verifyBoundEntities(ctx, req.Storage, adminToken, subject, iamID, role)
 	if err != nil {
 		return nil, err
 	}
-	resp := &logical.Response{Auth: req.Auth}
+	resp = &logical.Response{Auth: req.Auth}
 	resp.Auth.TTL = role.TokenTTL
 	resp.Auth.MaxTTL = role.TokenMaxTTL
 	resp.Auth.Period = role.TokenPeriod
 	return resp, nil
 }
 
-func (b *ibmCloudAuthBackend) verifyBoundEntities(accessToken, subject, iamID string, role *ibmCloudRole) error {
+func (b *ibmCloudAuthBackend) verifyBoundEntities(ctx context.Context, stg logical.Storage, accessToken, subject, iamID string, role *ibmCloudRole) error {
 	// Check for the subject in the bound subject list
 	if !strutil.StrListContains(role.BoundSubscriptionsIDs, subject) {
 		var err error
+
+		iam, resp := b.getIAMHelper(ctx, stg)
+		if resp != nil {
+			b.Logger().Error("failed to retrieve an IAM helper", "error", resp.Error())
+			return resp.Error()
+		}
+
 		// Check the access groups next
 		subjectFoundInGroup := false
 		for _, group := range role.BoundAccessGroupIDs {
-			if err = b.iamHelper.CheckGroupMembership(group, iamID, accessToken); err == nil {
+			if err = iam.CheckGroupMembership(group, iamID, accessToken); err == nil {
 				subjectFoundInGroup = true
 				break
 			}
@@ -226,10 +245,16 @@ func (b *ibmCloudAuthBackend) verifyAccountAccess(ctx context.Context, stg logic
 		return errors.New("no configuration was found")
 	}
 
+	iam, resp := b.getIAMHelper(ctx, stg)
+	if resp != nil {
+		b.Logger().Error("failed to retrieve an IAM helper", "error", resp.Error())
+		return resp.Error()
+	}
+
 	if subjectType == serviceIDSubjectType {
-		return b.iamHelper.CheckServiceIDAccount(adminToken, identifier, config.Account)
+		return iam.CheckServiceIDAccount(adminToken, identifier, config.Account)
 	} else {
-		return b.iamHelper.CheckUserIDAccount(adminToken, iamID, config.Account)
+		return iam.CheckUserIDAccount(adminToken, iamID, config.Account)
 	}
 }
 
