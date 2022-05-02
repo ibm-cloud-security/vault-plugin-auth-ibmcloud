@@ -123,7 +123,7 @@ The ID of the new API key is returned in the response.
 
 | Method   | Path |
 |----------|-------------------------------------------------|
-| `POST`   |  `/auth/ibmcloud/config/rotate-root`                 |
+| `POST`   |  `/auth/ibmcloud/config/rotate-root`            |
 
 
 ### Sample Request
