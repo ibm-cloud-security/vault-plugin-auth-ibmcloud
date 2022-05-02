@@ -3,14 +3,15 @@ package ibmcloudauth
 import (
 	"context"
 	"fmt"
+	"strings"
+	"testing"
+	"time"
+
 	"github.com/golang/mock/gomock"
 	"github.com/hashicorp/vault/sdk/helper/policyutil"
 	"github.com/hashicorp/vault/sdk/helper/strutil"
 	"github.com/hashicorp/vault/sdk/logical"
 	"github.com/stretchr/testify/assert"
-	"strings"
-	"testing"
-	"time"
 )
 
 /**
@@ -73,6 +74,8 @@ func getMockedBackend(t *testing.T, loginUserTokenInfo *tokenInfo, ctrl *gomock.
 	adminObtainTokenCalls := callCount["ObtainToken_admin"]
 	adminVerifyTokenCalls := callCount["VerifyToken_admin"]
 	userVerifyTokenCalls := callCount["VerifyToken_user"]
+	cleanupCalls := callCount["Cleanup"]
+
 	if adminObtainTokenCalls == 0 {
 		adminObtainTokenCalls = 1
 	}
@@ -122,12 +125,16 @@ func getMockedBackend(t *testing.T, loginUserTokenInfo *tokenInfo, ctrl *gomock.
 		return fmt.Errorf("mock CheckGroupMembership: user %s not in group: %s", iamID, groupID)
 	})
 
-	b, s := testBackendWithMock(t, mockHelper)
+	if cleanupCalls == 1 {
+		mockHelper.EXPECT().Cleanup()
+	}
+
+	b, s := testBackend(t)
 	err := testConfigCreate(t, b, s, configData)
 	if err != nil {
 		t.Fatal("error configuring the backend")
 	}
-
+	b.iamHelper = mockHelper
 	for _, data := range getTestRoles() {
 		testRoleCreate(t, b, s, data)
 	}
@@ -576,6 +583,7 @@ func TestRenewFailureConfigChanged(t *testing.T) {
 		"CheckUserIDAccount": 1,
 		"ObtainToken_user":   1,
 		"VerifyToken_user":   1,
+		"Cleanup":            1,
 	}
 	auth, b, s := loginUser1RenewTest(t, ctrl, callCounts)
 

@@ -6,7 +6,7 @@ This plugin allows for various IBM Cloud entities to authenticate with Vault.
 User accounts or service IDs can sign in using an IBM Cloud IAM access token or API key.
 
 ## Versions
-This version of the plugin was tested with Vault 1.6.0.
+This version of the plugin was tested with Vault 1.9.4.
 
 ## Installation
 
@@ -39,6 +39,14 @@ enable auth methods at any location, please update your API calls accordingly.
 
 ## Configure
 
+Configures the credentials and parameters required for the plugin to perform API calls to IBM Cloud IAM and User Management. These
+credentials will be used to verify user account and service ID account access and access group membership. The user account or
+service ID providing the API key needs to have the following permissions:
+
+* `Viewer` on `Access Groups Service`
+* `Viewer` on `IAM Identity Service` 
+* `Viewer` on `User Management Service` 
+
 Configures the auth method and must be done before authentication can succeed.
 
 | Method   | Path |
@@ -51,6 +59,10 @@ Configures the auth method and must be done before authentication can succeed.
 membership for the all the access groups bound to the plugin's roles.
 * `account_id (string: <required>)` - An IBM Cloud account ID. The auth method will only authenticate users or service IDs that
 have access to this account.
+* `iam_endpoint (string: <optional>)` - The custom or private IAM endpoint. For example `https://private.iam.cloud.ibm.com`.
+If unspecified the public endpoint, `https://iam.cloud.ibm.com`, is used.
+* `user_management_endpoint (string: <optional>)` - The custom or private user management endpoint. For example `https://private.user-management.cloud.ibm.com`.
+If unspecified the public endpoint, `https://user-management.cloud.ibm.com`, is used.
 
 ### Sample Payload
 
@@ -90,7 +102,9 @@ $ curl \
 {
   "data": {
     "api_key": "<redacted>",
-    "account_id": "abd85726cbd..."
+    "account_id": "abd85726cbd...",
+    "iam_endpoint": "https://iam.cloud.ibm.com",
+    "user_management_endpoint": "https://user-management.cloud.ibm.com",
   },
   "...": "..."
 
@@ -362,15 +376,12 @@ $ make dev
 For local development, use Vault's "dev" mode for fast setup:
 
 ```sh
-$ vault server -dev -dev-plugin-dir="$(pwd)/bin"
+$ vault server -dev -config vault.hcl
 ```
 
-The plugin will automatically be added to the catalog with the name
-"vault-plugin-auth-ibmcloud". Run the following command to enable this new auth
-method as a plugin:
-
-```sh
-$ vault auth enable -plugin-name="vault-plugin-auth-ibmcloud" -path="ibmcloud" plugin
-Success! Enabled vault-plugin-auth-ibmcloud auth method at: ibmcloud/
+Where vault.hcl configures the plugin directory like this:
 ```
- 
+plugin_directory = "./plugins"
+```
+
+Follow the setup instructions to copy, register, and enable the plugin.

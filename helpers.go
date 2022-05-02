@@ -6,14 +6,6 @@ import (
 	"net/http"
 )
 
-func getURL(endpoint, path string, pathReplacements ...string) string {
-	pathSubs := make([]interface{}, len(pathReplacements))
-	for i, v := range pathReplacements {
-		pathSubs[i] = v
-	}
-	return fmt.Sprintf("%s%s", endpoint, fmt.Sprintf(path, pathSubs...))
-}
-
 func httpRequest(client *http.Client, r *http.Request) ([]byte, int, error) {
 	resp, err := client.Do(r)
 	if err != nil {

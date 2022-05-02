@@ -4,15 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/coreos/go-oidc"
-	"github.com/hashicorp/errwrap"
-	"github.com/hashicorp/go-cleanhttp"
-	"github.com/hashicorp/vault/sdk/logical"
 	"net/http"
 	"net/url"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/coreos/go-oidc/v3/oidc"
+	"github.com/hashicorp/errwrap"
+	"github.com/hashicorp/go-cleanhttp"
+	"github.com/hashicorp/vault/sdk/logical"
 )
 
 // A struct to contain information from IBM Cloud tokens that we want to include in Vault token metadata
@@ -53,21 +54,25 @@ type iamHelper interface {
 	CheckServiceIDAccount(iamToken, identifier, accountID string) error
 	CheckUserIDAccount(iamToken, iamID, accountID string) error
 	CheckGroupMembership(groupID, iamID, iamToken string) error
-	Init()
+	Init(iamEndpoint, userManagementEndpoint string)
 	Cleanup()
 }
 
 type ibmCloudHelper struct {
-	providerLock      sync.RWMutex
-	provider          *oidc.Provider
-	providerCtx       context.Context
-	providerCtxCancel context.CancelFunc
-	httpClient        *http.Client
+	providerLock           sync.RWMutex
+	provider               *oidc.Provider
+	providerCtx            context.Context
+	providerCtxCancel      context.CancelFunc
+	httpClient             *http.Client
+	iamEndpoint            string
+	userManagementEndpoint string
 }
 
-func (h *ibmCloudHelper) Init() {
+func (h *ibmCloudHelper) Init(iamEndpoint, userManagementEndpoint string) {
 	h.providerCtx, h.providerCtxCancel = context.WithCancel(context.Background())
 	h.httpClient = cleanhttp.DefaultPooledClient()
+	h.iamEndpoint = iamEndpoint
+	h.userManagementEndpoint = userManagementEndpoint
 }
 
 func (h *ibmCloudHelper) Cleanup() {
@@ -95,7 +100,16 @@ func (h *ibmCloudHelper) getProvider() (*oidc.Provider, error) {
 		return h.provider, nil
 	}
 
-	provider, err := oidc.NewProvider(h.providerCtx, iamIdentityEndpointDefault)
+	identityURL := h.getIAMURL(identity)
+	providerCtx := h.providerCtx
+
+	// Use the InsecureIssuerURLContext if the idenity URL does not equal the issuer
+	// URL. This is the case with IBM Cloud private endpoints.
+	if identityURL != openIDIssuer {
+		providerCtx = oidc.InsecureIssuerURLContext(h.providerCtx, openIDIssuer)
+	}
+
+	provider, err := oidc.NewProvider(providerCtx, identityURL)
 	if err != nil {
 		return nil, errwrap.Wrapf("error creating provider with given values: {{err}}", err)
 	}
@@ -105,7 +119,7 @@ func (h *ibmCloudHelper) getProvider() (*oidc.Provider, error) {
 }
 
 func (h *ibmCloudHelper) CheckGroupMembership(groupID, iamID, iamToken string) error {
-	r, err := http.NewRequest(http.MethodHead, getURL(iamEndpointFieldDefault, accessGroupMembershipCheck, groupID, iamID), nil)
+	r, err := http.NewRequest(http.MethodHead, h.getIAMURL(accessGroupMembershipCheck, groupID, iamID), nil)
 	if err != nil {
 		return errwrap.Wrapf("failed creating http request for creating policy: {{err}}", err)
 	}
@@ -127,7 +141,7 @@ func (h *ibmCloudHelper) ObtainToken(apiKey string) (string, error) {
 	data.Set("apikey", apiKey)
 	data.Set("response_type", "cloud_iam")
 
-	req, err := http.NewRequest(http.MethodPost, iamIdentityEndpointDefault+"/token", strings.NewReader(data.Encode()))
+	req, err := http.NewRequest(http.MethodPost, h.getIAMURL(identityToken), strings.NewReader(data.Encode()))
 	if err != nil {
 		return "", errwrap.Wrapf("Error creating obtain token request: {{err}}", err)
 	}
@@ -159,7 +173,7 @@ func (h *ibmCloudHelper) VerifyToken(ctx context.Context, token string) (*tokenI
 	// verify the token
 	provider, err := h.getProvider()
 	if err != nil {
-		return nil, logical.ErrorResponse("unable to successfully parse all claims from token: %s", err)
+		return nil, logical.ErrorResponse("an error occurred retreiving the OIDC provider: %s", err)
 	}
 
 	oidcConfig := &oidc.Config{
@@ -188,7 +202,7 @@ func (h *ibmCloudHelper) VerifyToken(ctx context.Context, token string) (*tokenI
 }
 
 func (h *ibmCloudHelper) CheckServiceIDAccount(iamToken, identifier, accountID string) error {
-	r, err := http.NewRequest(http.MethodGet, getURL(iamEndpointFieldDefault, serviceIDDetails, identifier), nil)
+	r, err := http.NewRequest(http.MethodGet, h.getIAMURL(serviceIDDetails, identifier), nil)
 	if err != nil {
 		return errwrap.Wrapf("failed creating http request for creating policy: {{err}}", err)
 	}
@@ -218,7 +232,7 @@ func (h *ibmCloudHelper) CheckServiceIDAccount(iamToken, identifier, accountID s
 }
 
 func (h *ibmCloudHelper) CheckUserIDAccount(iamToken, iamID, accountID string) error {
-	r, err := http.NewRequest(http.MethodGet, getURL(userMgmtEndpointDefault, getUserProfile, accountID, iamID), nil)
+	r, err := http.NewRequest(http.MethodGet, h.getUserManagementURL(getUserProfile, accountID, iamID), nil)
 	if err != nil {
 		return errwrap.Wrapf("failed creating http request for creating policy: {{err}}", err)
 	}
@@ -228,4 +242,20 @@ func (h *ibmCloudHelper) CheckUserIDAccount(iamToken, iamID, accountID string) e
 	r.Header.Set("Accept", "application/json")
 	_, err = httpRequestCheckStatus(h.httpClient, r, http.StatusOK)
 	return err
+}
+
+func (h *ibmCloudHelper) getURL(endpoint, path string, pathReplacements ...string) string {
+	pathSubs := make([]interface{}, len(pathReplacements))
+	for i, v := range pathReplacements {
+		pathSubs[i] = v
+	}
+	return fmt.Sprintf("%s%s", endpoint, fmt.Sprintf(path, pathSubs...))
+}
+
+func (h *ibmCloudHelper) getIAMURL(path string, pathReplacements ...string) string {
+	return h.getURL(h.iamEndpoint, path, pathReplacements...)
+}
+
+func (h *ibmCloudHelper) getUserManagementURL(path string, pathReplacements ...string) string {
+	return h.getURL(h.userManagementEndpoint, path, pathReplacements...)
 }
