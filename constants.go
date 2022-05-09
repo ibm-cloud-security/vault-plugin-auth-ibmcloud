@@ -6,15 +6,6 @@ const (
 	userMgmtEndpointDefault = "https://user-management.cloud.ibm.com"
 )
 
-// IAM API paths
-const (
-	accessGroupMembershipCheck = "/v2/groups/%s/members/%s"
-	serviceIDDetails           = "/v1/serviceids/%s"
-	getUserProfile             = "/v2/accounts/%s/users/%s"
-	identityToken              = "/identity/token"
-	identity                   = "/identity"
-)
-
 //Number of minutes to renew the admin token before expiration
 const adminTokenRenewBeforeExpirationMinutes = 5
 
@@ -32,4 +23,5 @@ const (
 	subjectField                = "subject"
 	subjectTypeField            = "sub_type"
 	serviceIDSubjectType        = "ServiceId"
+	apiKeyID                    = "api_key_id"
 )
