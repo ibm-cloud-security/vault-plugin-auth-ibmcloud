@@ -27,6 +27,9 @@ const (
 	v1APIKeys                  = "/v1/apikeys"
 	v1APIKeysID                = v1APIKeys + "/%s"
 	v1APIKeyDetails            = "/v1/apikeys/details"
+	// IAM OIDC provider paths
+	authorizationEndpoint = "/identity/authorize"
+	jwksURI               = "/identity/keys"
 )
 
 // A struct to contain information from IBM Cloud tokens that we want to include in Vault token metadata
@@ -110,13 +113,13 @@ func (h *ibmCloudHelper) Cleanup() {
 	h.providerLock.Unlock()
 }
 
-func (h *ibmCloudHelper) getProvider() (*oidc.Provider, error) {
+func (h *ibmCloudHelper) getProvider() *oidc.Provider {
 	h.providerLock.RLock()
 	unlockFunc := h.providerLock.RUnlock
 	defer func() { unlockFunc() }()
 
 	if h.provider != nil {
-		return h.provider, nil
+		return h.provider
 	}
 
 	h.providerLock.RUnlock()
@@ -124,25 +127,21 @@ func (h *ibmCloudHelper) getProvider() (*oidc.Provider, error) {
 	unlockFunc = h.providerLock.Unlock
 
 	if h.provider != nil {
-		return h.provider, nil
+		return h.provider
 	}
 
-	identityURL := h.getIAMURL(identity)
 	providerCtx := h.providerCtx
 
-	// Use the InsecureIssuerURLContext if the idenity URL does not equal the issuer
-	// URL. This is the case with IBM Cloud private endpoints.
-	if identityURL != openIDIssuer {
-		providerCtx = oidc.InsecureIssuerURLContext(h.providerCtx, openIDIssuer)
+	providerConfig := oidc.ProviderConfig{
+		IssuerURL: openIDIssuer,
+		AuthURL:   h.getIAMURL(authorizationEndpoint),
+		TokenURL:  h.getIAMURL(identityToken),
+		JWKSURL:   h.getIAMURL(jwksURI),
 	}
 
-	provider, err := oidc.NewProvider(providerCtx, identityURL)
-	if err != nil {
-		return nil, errwrap.Wrapf("error creating provider with given values: {{err}}", err)
-	}
-
+	provider := providerConfig.NewProvider(providerCtx)
 	h.provider = provider
-	return provider, nil
+	return provider
 }
 
 func (h *ibmCloudHelper) CheckGroupMembership(groupID, iamID, iamToken string) error {
@@ -198,10 +197,7 @@ with relevant items contained in the token.
 */
 func (h *ibmCloudHelper) VerifyToken(ctx context.Context, token string) (*tokenInfo, *logical.Response) {
 	// verify the token
-	provider, err := h.getProvider()
-	if err != nil {
-		return nil, logical.ErrorResponse("an error occurred retreiving the OIDC provider: %s", err)
-	}
+	provider := h.getProvider()
 
 	oidcConfig := &oidc.Config{
 		SkipClientIDCheck: true,

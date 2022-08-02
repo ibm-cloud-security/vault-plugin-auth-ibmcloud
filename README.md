@@ -5,9 +5,6 @@ This plugin allows for various IBM Cloud entities to authenticate with Vault.
 
 User accounts or service IDs can sign in using an IBM Cloud IAM access token or API key.
 
-## Versions
-This version of the plugin was tested with Vault 1.9.4.
-
 ## Installation
 
 The plugin must be built before it is installed. Follow the steps in [Developing](#Developing) to build
